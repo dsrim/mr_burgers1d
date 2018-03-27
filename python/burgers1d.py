@@ -1062,7 +1062,9 @@ class Rom(object):
 
             self._rom_T.append(transition_list)
 
-            # save generated lists to output files
+            ##                                              ##
+            ##      save generated lists to output files    ##
+            ##                                              ##
             L = len(basis_list)
             for k in range(L):
                 m = L - 1 - k
@@ -1104,7 +1106,8 @@ class Rom(object):
 
         self._rom_reduced = True
 
-    def _set_up_rom(self,reset=False,load_basis=False):
+    def _set_up_rom(self,reset=False,load_basis=False,\
+                         simplex_list=None, time_interval_list=None):
         r"""
         
         Load bases / F / src / transition_list into memory
@@ -1122,7 +1125,18 @@ class Rom(object):
                 prefix = ''
             
             K = self._rom_tri.nsimplex
-            L = len(self._time_index_list)
+            M = len(self._time_index_list) 
+
+            if simplex_list == None:
+                k_list = range(K)
+            else:
+                k_list = simplex_list
+
+            if time_interval_list == None:
+                #TODO: not to be confused with usual time_index_list
+                m_list = range(M-1)
+            else:
+                m_list = time_interval_list
 
             self._rom_basis = []
             self._rom_F = []
@@ -1131,7 +1145,7 @@ class Rom(object):
             self._rom_T = []
             self._rom_M = []
             
-            for k in range(K):
+            for k in k_list:
                 M_fname = '_output/' + prefix + \
                         'M_' + str(k) + '.npy'
                 M_list = np.load(M_fname)
@@ -1140,7 +1154,7 @@ class Rom(object):
                 src_list = []
                 basis_list = []
                 bc_list = []
-                for m in range(L-1):
+                for m in m_list:
                     basis_fname = '_output/' + prefix + \
                             'basis_' +str(k)+ '_' +str(m)+ '.npy'
                     F_fname = '_output/' + prefix + \
@@ -1166,7 +1180,7 @@ class Rom(object):
                     bc_list.append(bc.copy())
                     
                     # transition list of length L-2 
-                    if (m < L-2):
+                    if (m < M-2):
                         T = np.load(T_fname)
                         transition_list.append(T.copy())
                 
@@ -1183,7 +1197,8 @@ class Rom(object):
 
     
     def run_rom(self,mu=[7.5, 0.035],M0=4000,\
-                     evaluate=False,verbose=False,reread=False):
+                     evaluate=False,verbose=False,reread=False,\
+                     frugal=False):
         r"""
         run reduced order model
         kwargs
@@ -1203,14 +1218,24 @@ class Rom(object):
         time_index_list = self._time_index_list
         L = len(time_index_list)
         
-        self._set_up_rom(reset=reread,load_basis=evaluate)
-
-        M_list = self._rom_M[k]
-        F_list = self._rom_F[k]
-        src_list = self._rom_src[k]
-        basis_list = self._rom_basis[k]
-        bc_list = self._rom_bc[k]
-        transition_list = self._rom_T[k]
+        if frugal:
+            self._set_up_rom(simplex_list=[k])
+            
+            M_list = self._rom_M[0]
+            F_list = self._rom_F[0]
+            src_list = self._rom_src[0]
+            basis_list = self._rom_basis[0]
+            bc_list = self._rom_bc[0]
+            transition_list = self._rom_T[0]
+        else:
+            self._set_up_rom(reset=reread,load_basis=evaluate)
+    
+            M_list = self._rom_M[k]
+            F_list = self._rom_F[k]
+            src_list = self._rom_src[k]
+            basis_list = self._rom_basis[k]
+            bc_list = self._rom_bc[k]
+            transition_list = self._rom_T[k]
         
         #TODO: create setup_rom() to set up the reduced order model
         #      load transition_list, F_list, src_list, basis_list into memory
