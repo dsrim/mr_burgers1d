@@ -47,6 +47,7 @@ class Rom(object):
         self._times_index_list = [] # ROM grid-points in time
 
         self._rom_reduced = False   # ROM basis reduction flag
+        self._rom_set_up = False   # ROM basis reduction flag
 
         self._dpi = 200             # dpi for savefigs
 
@@ -910,7 +911,7 @@ class Rom(object):
 
     
     def build_bases(self,tol=1e-10,Mfinal=80,max_basis_size=200,\
-                    t_interval=5,P=5,nalpha=5,save_raw=False):
+                    t_interval=5,P=5,p = 40,nalpha=5,save_raw=False):
         r'''
 
         P = 5            no. of samples per triangular element
@@ -1039,7 +1040,6 @@ class Rom(object):
                 F_list.append(F)
             
                 # compute source term
-                p = 40
                 src = precompute_src_rom(U[:,:M_k],p=p)
                 src_list.append(src)
 
@@ -1105,84 +1105,94 @@ class Rom(object):
             M_fname = '_output/M_' + str(n) + '.npy'
             np.save(M_fname,M_list)
 
+
     def reduce_bases(self):
         r"""
             further reduction of the model based on sampling
         """
 
-
         self._rom_reduced = True
 
-    def _set_up_rom(self):
+    def _set_up_rom(self,reset=False,load_basis=False):
         r"""
         
         Load bases / F / src / transition_list into memory
 
         """
 
-        K = self._rom_tri.nsimplex
+        if reset:
+            self._rom_set_up = False
 
-        #transition_list = self._rom_T[k]
-        #F_list = self._rom_F[k]
-        #src_list = self._rom_src[k]
-        #basis_list = self._rom_basis[k]
-        #bc_list = self._rom_bc[k]
-        self._rom_basis = []
-        self._rom_F = []
-        self._rom_src = []
-        self._rom_bc = []
-        self._rom_T = []
-        self._rom_M = []
-        
-        for k in range(K):
-            M_fname = \
-                    '_output/M_' + str(k) + '.npy'
-            M_list = np.load(M_fname)
-            transition_list = []
-            F_list = []
-            src_list = []
-            basis_list = []
-            bc_list = []
-            for m in range(L-1):
-                basis_fname = \
-                        '_output/basis_' +str(k)+ '_' +str(m)+ '.npy'
-                F_fname = \
-                        '_output/F_' +str(k)+ '_' +str(m)+ '.npy'
-                src_fname = \
-                        '_output/src_' +str(k)+ '_' +str(m)+ '.npy'
-                T_fname = \
-                        '_output/transition_'+str(k)+'_'+str(m+1) + '.npy'
-                bc_fname = \
-                        '_output/bc_' +str(n)+ '_' +str(m)+ '.npy'
-    
-                F = np.load(F_fname)
-                src = np.load(src_fname)
-                bc = np.load(bc_fname)
-                
-                # load basis only if told to evaluate
-                # TODO: .copy() necessary?
-                if (m == 0) or ((m > 0) and evaluate):
-                    basis = np.load(basis_fname)
-                    basis_list.append(basis.copy())
-                F_list.append(F.copy())
-                src_list.append(src.copy())
-                bc_list.append(bc.copy())
-                
-                # transition list of length L-2 
-                if (m < L-2):
-                    T = np.load(T_fname)
-                    transition_list.append(T.copy())
+        if not self._rom_set_up:
             
-            self._rom_M.append(M_list)
-            self._rom_F.append(F_list)
-            self._rom_src.append(src_list)
-            self._rom_basis.append(basis_list)
-            self._rom_bc.append(bc_list)
-            self._rom_T.append(transition_list)
-    
+            if self._rom_reduced:
+                prefix = 'r'
+            else:
+                prefix = ''
+            
+            K = self._rom_tri.nsimplex
+            L = len(self._time_index_list)
 
+            self._rom_basis = []
+            self._rom_F = []
+            self._rom_src = []
+            self._rom_bc = []
+            self._rom_T = []
+            self._rom_M = []
+            
+            for k in range(K):
+                M_fname = '_output/' + prefix + \
+                        'M_' + str(k) + '.npy'
+                M_list = np.load(M_fname)
+                transition_list = []
+                F_list = []
+                src_list = []
+                basis_list = []
+                bc_list = []
+                for m in range(L-1):
+                    basis_fname = '_output/' + prefix + \
+                            'basis_' +str(k)+ '_' +str(m)+ '.npy'
+                    F_fname = '_output/' + prefix + \
+                            'F_' +str(k)+ '_' +str(m)+ '.npy'
+                    src_fname = '_output/' + prefix + \
+                            'src_' +str(k)+ '_' +str(m)+ '.npy'
+                    T_fname = '_output/' + prefix + \
+                            'transition_'+str(k)+'_'+str(m+1) + '.npy'
+                    bc_fname = '_output/' + prefix + \
+                            'bc_' +str(k)+ '_' +str(m)+ '.npy'
+    
+                    F = np.load(F_fname)
+                    src = np.load(src_fname)
+                    bc = np.load(bc_fname)
+                    
+                    # load basis only if told to evaluate
+                    # TODO: .copy() necessary?
+                    if (m == 0) or ((m > 0) and load_basis):
+                        basis = np.load(basis_fname)
+                        basis_list.append(basis.copy())
+                    F_list.append(F.copy())
+                    src_list.append(src.copy())
+                    bc_list.append(bc.copy())
+                    
+                    # transition list of length L-2 
+                    if (m < L-2):
+                        T = np.load(T_fname)
+                        transition_list.append(T.copy())
+                
+                self._rom_M.append(M_list)
+                self._rom_F.append(F_list)
+                self._rom_src.append(src_list)
+                self._rom_basis.append(basis_list)
+                self._rom_bc.append(bc_list)
+                self._rom_T.append(transition_list)
+                
+                self._rom_set_up = True
+        else:
+             pass
+
+    
     def run_rom(self,mu=[7.5, 0.035],M0=4000,\
-                     evaluate=False,verbose=False):
+                     evaluate=False,verbose=False,reread=False):
         r"""
         run reduced order model
         kwargs
@@ -1202,6 +1212,8 @@ class Rom(object):
         time_index_list = self._time_index_list
         L = len(time_index_list)
         
+        self._set_up_rom(reset=reread,load_basis=evaluate)
+
         M_list = self._rom_M[k]
         F_list = self._rom_F[k]
         src_list = self._rom_src[k]
@@ -1380,3 +1392,8 @@ class Rom(object):
             pickle.dump(self._rom_tri, output, pickle.HIGHEST_PROTOCOL)
 
 
+    def load_data(self):
+        
+        import pickle
+
+        #TODO: load 

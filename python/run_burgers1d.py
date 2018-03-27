@@ -12,9 +12,9 @@ Rom0.sample_hfm(N=250,dt=0.0125,xl=0.,xr=100.,M=4000)
 Rom0.plot_hfm_solution()
 
 if 1:
-    Rom0.build_bases(tol=1e-10,max_basis_size=200,Mfinal=100,t_interval=20,\
+    Rom0.build_bases(tol=1e-10,max_basis_size=200,Mfinal=50,t_interval=20,\
                    nalpha=4,P=4)
-    Rom0.save()
+    #Rom0.save()
 
     mu0 = [7.2,0.04]
     Rom0.run_rom(mu=mu0,evaluate=True,M0=50)
