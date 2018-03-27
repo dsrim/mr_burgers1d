@@ -884,11 +884,8 @@ class Rom(object):
                 ax[1,1].plot(u10,'g');
                 ax[2,1].plot(u01,'r');  
         
-            #     ax[0,0].plot(u00p,'b')
                 ax[0,0].plot(u00m,'b--')
-            #     ax[1,0].plot(u10p,'g')
                 ax[1,0].plot(u10m,'g--')
-            #     ax[2,0].plot(u01p,'r')
                 ax[2,0].plot(u01m,'r--')
             
             uaa = self._dinterp2D(u10,u01,u00,c,offset=0.,return_parts=False)
@@ -897,15 +894,9 @@ class Rom(object):
                 pl.figure(figsize=(15,2))
                 pl.plot(uaa)
                 pl.title(str(j))
-        #      pl.plot(uaa,'r')
-        #      print(u00[0],u10[0],u01[0])
-        #      print(1. - c[0] - c[1])*u00[0] + c[0]*u10[0] + c[1]*u01[0]
             
             uaa_snapshot.append(uaa)
-    #         uaa_snapshot += uaa_list
-        # f,ax = pl.subplots(ncols=1,nrows=1,figsize=(10,3));
         
-        # uaa_snapshot.append(np.ones(uaa.shape))
         uaa_snapshot = np.array(uaa_snapshot).T
         return uaa_snapshot
 
@@ -1393,7 +1384,45 @@ class Rom(object):
 
 
     def load_data(self):
+        r"""
+            
+            load data 
+            
+        """
         
         import pickle
 
-        #TODO: load 
+        with open('_output/info.txt',mode='r') as input_file:
+            for row in input_file:
+                val = row.split('=')[1]
+                if 'N' == row.split('=')[0][0]:
+                    N = int(val)
+                if 'M' == row.split('=')[0][0]:
+                    M = int(val)
+                elif 'h' == row.split('=')[0][0]:
+                    h = float(val)
+                elif 'dt' == row.split('=')[0][0:2]:
+                    dt = float(val)
+                elif 'P' == row.split('=')[0][0]:
+                    P = int(val)
+
+        self._N = N
+        self._h = h
+        self._hfm_M = M
+        self._hfm_dt = dt
+        self._rom_P = P
+
+        # spatial grid
+        fname = '_output/x.npy'
+        self._x = np.load(fname)
+
+        # time_index_list
+        fname = '_output/time_index.npy'
+        self._time_index_list = np.load(fname)
+        
+        # pickle triangulation
+        fname = '_output/tri.pkl'
+        with open(fname, 'r') as input_pkl:
+            self._rom_tri = pickle.load(input_pkl)
+
+        
