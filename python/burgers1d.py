@@ -1099,12 +1099,116 @@ class Rom(object):
             np.save(M_fname,M_list)
 
 
-    def reduce_bases(self):
+    def mc_sample(self):
         r"""
             further reduction of the model based on sampling
         """
 
-        self._rom_reduced = True
+        np.random.seed(12345)
+
+        # generate samples
+        for n in range(self._rom_tri.nsimplex):
+            j = 0
+            random_mu_list = []
+            random_mu = self._random_mu
+            rs_list = []
+
+            while(len(random_mu_list) < 5000):
+                # sample random variable
+                mu0 = random_mu()
+                
+                n0 = int(self._rom_tri.find_simplex(mu0))
+                if n0 == n:
+                    random_mu_list.append(mu0)
+            
+                    print('running rom..')
+                    self.run_rom(mu=mu0,frugal=True,M0=4000)
+                    print('= done')
+                    rs_list.append(copy(self._rom_r_list))
+                    print('sample number: ' + str(j))
+                    j += 1
+            
+            mu_fname = '_output/sampled_mu_' + str(n) + '.npy'
+            sols_fname = '_output/sampled_rom_sols_' + str(n) + '.npy'
+            np.save(mu_fname,random_mu_list)
+            np.save(sols_fname,rs_list)
+            self._rom_set_up = False
+
+
+    def _reduce_bases(self,tol=1e-8):
+        r"""
+            compute further reduction using low-dimensional space 
+        
+        """
+        
+        n = 0
+
+
+        # compute reduction
+        mu_fname = '_output/sampled_mu_' + str(n) + '.npy'
+        sols_fname = '_output/sampled_rom_sols_' + str(n) + '.npy'
+
+        snapshot_list = np.load(sols_fname)
+        M = snapshot_list.shape[0]      # number of time intervals
+        m = 0
+
+        sampled_sols = snapshot_list[m]
+        M0 = sampled_sols.shape[1]      # number of "generated" bases
+        W,s,V = np.linalg.norm(sampled_sols,full_matrices=0)
+        m0 = \
+            next((i for i,si in enumerate(s/s[0]) if si < tol),M0)
+        
+        print('no. of reduced basis m0 = ' + str(m0))
+        W = W[:,:m0]
+
+        m0 = W.shape[1]                 # reduced dimension
+        
+        # compute basis
+        basis_fname = \
+                '_output/basis_' +str(n)+ '_' +str(m)+ '.npy'
+        basis = np.load(basis_fname)
+        basis_r = np.dot(basis,W)
+        #TODO: save basis_r
+
+        # reduce flux
+        F_fname = \
+                '_output/F_' +str(n)+ '_' +str(m)+ '.npy'
+        F = np.load(F_fname)
+        F_r = np.zeros((m0,m0,m0))
+        for i in range(m0):
+            for j in range(m0):
+                for k in range(m0):
+                    F_r(i,j,k) = \
+                        np.dot(np.dot(np.dot(F,W[:,k]),W[:,j]),W[:,i])
+        #TODO: save F_r
+        
+        # reduce source
+        src_fname = \
+                '_output/src_' +str(n)+ '_' +str(m)+ '.npy'
+        src = np.load(src_fname)
+        p = src.shape[1]
+        src_r = np.zeros((m0,p))
+        for i in range(m0):
+            src_r[i,:] = np.dot(W[:,i],src)
+        #TODO: save src_r
+        
+        # reduce BCs
+        bc_fname = \
+                '_output/bc_' +str(n)+ '_' +str(m)+ '.npy'
+        bc = np.load(bc_fname)
+        bc_r = np.zeros(m0)
+        for i in range(m0):
+            bc_r[i] = np.dot(bc,W[:,i])
+        #TODO: save bc_r
+        
+
+        #self._rom_reduced = True
+
+    def _random_mu(self):
+        mu = np.random.rand(2)
+        mu[0] = mu[0]*(9. - 3.) + 3.
+        mu[1] = mu[1]*(0.075 - 0.02) + 0.02
+        return mu
 
     def _set_up_rom(self,reset=False,load_basis=False,\
                          simplex_list=None, time_interval_list=None):
@@ -1193,8 +1297,12 @@ class Rom(object):
                 
                 self._rom_set_up = True
         else:
-             pass
+            print('ROM already set up')
+            pass
 
+    def reduce_rom(self):
+
+        self.run_rom(mu=mu0)
     
     def run_rom(self,mu=[7.5, 0.035],M0=4000,\
                      evaluate=False,verbose=False,reread=False,\
