@@ -1099,7 +1099,7 @@ class Rom(object):
             np.save(M_fname,M_list)
 
 
-    def mc_sample(self):
+    def mc_sample(self,nsols=1000):
         r"""
             further reduction of the model based on sampling
         """
@@ -1113,7 +1113,7 @@ class Rom(object):
             random_mu = self._random_mu
             rs_list = []
 
-            while(len(random_mu_list) < 5000):
+            while(len(random_mu_list) < nsols):
                 # sample random variable
                 mu0 = random_mu()
                 
@@ -1134,75 +1134,139 @@ class Rom(object):
             np.save(sols_fname,rs_list)
             self._rom_set_up = False
 
+    def _dot3d(self,A,B,C,D):
+        r"""
+            compute A_{i,j,k} B_{i,I} C_{j,J} D_{k,K}
+            resulting in: an array E of size {I,J,K}
+        """
 
-    def _reduce_bases(self,tol=1e-8):
+        E = np.dot(A,D)
+        E = np.transpose(np.dot(np.transpose(E,(0,2,1)),C),(0,2,1))
+        E = np.transpose(np.dot(np.transpose(E,(2,1,0)),C),(2,1,0))
+
+        return E
+
+    def _reduce_bases(self,tol=1e-6):
         r"""
             compute further reduction using low-dimensional space 
         
         """
+        N = self._rom_tri.nsimplex
+        til = self._time_index_list.tolist()
+        M = len(til)
         
-        n = 0
+        for n in range(N):
+            # compute reduction
+            mu_fname = '_output/sampled_mu_' + str(n) + '.npy'
+            sols_fname = '_output/sampled_rom_sols_' + str(n) + '.npy'
 
+            M_fname = '_output/M_' + str(n) + '.npy'
+            M_list = np.load(M_fname)
+            snapshot_list = np.load(sols_fname)
+            M = snapshot_list.shape[1]      # number of time intervals
+            rM_list = []
 
-        # compute reduction
-        mu_fname = '_output/sampled_mu_' + str(n) + '.npy'
-        sols_fname = '_output/sampled_rom_sols_' + str(n) + '.npy'
+            for m in range(len(M_list)):
+                
+                m1 = M_list[m]
+                sampled_sols_list = []
+                for i in range(til[m]-1,til[m+1]-1):
+                    new_array = np.array([snapshot_list[:,i][k].T \
+                        for k in range(snapshot_list.shape[0])]).T
+                    sampled_sols_list.append(new_array)   
+                
+                sampled_sols = np.concatenate(sampled_sols_list,axis=1)
+                print(sampled_sols.shape)
+                
+                M0 = sampled_sols.shape[1]      # number of "generated" bases
+                W,s,V = np.linalg.svd(sampled_sols,full_matrices=0)
 
-        snapshot_list = np.load(sols_fname)
-        M = snapshot_list.shape[0]      # number of time intervals
-        m = 0
+                # compute reduced basis by truncating singular values,
+                # store no. of reduced basis
+                m0 = \
+                    next((i for i,si in enumerate(s/s[0]) if si < tol),M0)
+                print('m = ' +str(m)+ ' | no. of reduced basis m0 = ' \
+                    + str(m0) + ' / m1 = ' + str(m1))
+                rM_list.append(m0)  
+                W = W[:,:m0]
+                
+                # compute basis
+                print('- computing basis...')
+                basis_fname = \
+                        '_output/basis_' +str(n)+ '_' +str(m)+ '.npy'
+                basis = np.load(basis_fname)
+                m2 = min([basis.shape[1], W.shape[0]])
+                rbasis = np.dot(basis[:,:m2],W[:m2,:])
+                rbasis_fname = \
+                        '_output/rbasis_' +str(n)+ '_' +str(m)+ '.npy'
+                np.save(rbasis_fname,rbasis)
 
-        sampled_sols = snapshot_list[m]
-        M0 = sampled_sols.shape[1]      # number of "generated" bases
-        W,s,V = np.linalg.norm(sampled_sols,full_matrices=0)
-        m0 = \
-            next((i for i,si in enumerate(s/s[0]) if si < tol),M0)
+                # reduce flux
+                print('- computing flux...')
+                F_fname = \
+                        '_output/F_' +str(n)+ '_' +str(m)+ '.npy'
+                F = np.load(F_fname)
+                I,J,K = np.meshgrid(range(m0),range(m0),range(m0))
+                Indices = np.array([I.flatten(),J.flatten(),K.flatten()]).T
+                rF = self._dot3d(F,W,W,W)
+                
+                #rF0 = np.zeros((m0,m0,m0))
+                #for ii in range(Indices.shape[0]):
+                #    i = Indices[ii,0]
+                #    j = Indices[ii,1]
+                #    k = Indices[ii,2]
+                #    rF0[i,j,k] = \
+                #                np.dot(np.dot(np.dot(F,W[:,k]),W[:,j]),W[:,i])
+                rF_fname = \
+                        '_output/rF_' +str(n)+ '_' +str(m)+ '.npy'
+                np.save(rF_fname,rF)
+                
+                # reduce source
+                print('- computing source...')
+                src_fname = \
+                        '_output/src_' +str(n)+ '_' +str(m)+ '.npy'
+                src = np.load(src_fname)
+                p = src.shape[1]
+                #rsrc = np.zeros((m0,p))
+                #for i in range(m0):
+                #    rsrc[i,:] = np.dot(W[:,i],src)
+                rsrc = np.dot(W.T,src)
+                rsrc_fname = \
+                        '_output/rsrc_' +str(n)+ '_' +str(m)+ '.npy'
+                np.save(rsrc_fname,rsrc)
+                
+                # reduce BCs
+                print('- computing BC...')
+                bc_fname = \
+                        '_output/bc_' +str(n)+ '_' +str(m)+ '.npy'
+                bc = np.load(bc_fname)
+                #rbc = np.zeros(m0)
+                #for i in range(m0):
+                #    rbc[i] = np.dot(bc,W[:,i])
+                rbc = np.dot(bc,W)
+                bc_fname = \
+                        '_output/rbc_' +str(n)+ '_' +str(m)+ '.npy'
+                np.save(bc_fname,rbc)
+
+                # reduce transition list
+                if (m > 0):
+                    print('- computing transition matrix...')
+                    T_fname =  \
+                        '_output/transition_'+str(n)+'_'+str(m) + '.npy'
+                    T = np.load(T_fname)
+                    Tw = np.dot(T,W_old)
+                    rT = np.dot(W.T,Tw)
+                    rT_fname =  \
+                        '_output/rtransition_'+str(n)+'_'+str(m) + '.npy'
+                    np.save(rT_fname,rT)
+                W_old = W                    
+                print('= done.')
         
-        print('no. of reduced basis m0 = ' + str(m0))
-        W = W[:,:m0]
-
-        m0 = W.shape[1]                 # reduced dimension
-        
-        # compute basis
-        basis_fname = \
-                '_output/basis_' +str(n)+ '_' +str(m)+ '.npy'
-        basis = np.load(basis_fname)
-        basis_r = np.dot(basis,W)
-        #TODO: save basis_r
-
-        # reduce flux
-        F_fname = \
-                '_output/F_' +str(n)+ '_' +str(m)+ '.npy'
-        F = np.load(F_fname)
-        F_r = np.zeros((m0,m0,m0))
-        for i in range(m0):
-            for j in range(m0):
-                for k in range(m0):
-                    F_r(i,j,k) = \
-                        np.dot(np.dot(np.dot(F,W[:,k]),W[:,j]),W[:,i])
-        #TODO: save F_r
-        
-        # reduce source
-        src_fname = \
-                '_output/src_' +str(n)+ '_' +str(m)+ '.npy'
-        src = np.load(src_fname)
-        p = src.shape[1]
-        src_r = np.zeros((m0,p))
-        for i in range(m0):
-            src_r[i,:] = np.dot(W[:,i],src)
-        #TODO: save src_r
-        
-        # reduce BCs
-        bc_fname = \
-                '_output/bc_' +str(n)+ '_' +str(m)+ '.npy'
-        bc = np.load(bc_fname)
-        bc_r = np.zeros(m0)
-        for i in range(m0):
-            bc_r[i] = np.dot(bc,W[:,i])
-        #TODO: save bc_r
-        
-
-        #self._rom_reduced = True
+            rM_fname = \
+                       '_output/rM_' + str(n) + '.npy'
+            np.save(rM_fname, rM_list)
+        self._rom_reduced = True
+    
 
     def _random_mu(self):
         mu = np.random.rand(2)
@@ -1300,9 +1364,9 @@ class Rom(object):
             print('ROM already set up')
             pass
 
-    def reduce_rom(self):
-
-        self.run_rom(mu=mu0)
+#    def reduce_rom(self):
+#
+#        self.run_rom(mu=mu0)
     
     def run_rom(self,mu=[7.5, 0.035],M0=4000,\
                      evaluate=False,verbose=False,reread=False,\
@@ -1400,7 +1464,10 @@ class Rom(object):
             
             if evaluate:
                 M_k = M_list[i0_old]
-                fname = '_output/basis_' + str(k) + '_' + str(i0_old) + '.npy'
+                if self._rom_reduced:
+                    fname = '_output/rbasis_' + str(k) + '_' + str(i0_old) + '.npy'
+                else:
+                    fname = '_output/basis_' + str(k) + '_' + str(i0_old) + '.npy'
                 Usmall = np.load(fname)
                 ua = np.dot(Usmall,r1)
                 self._rom_ra_list.append(ua)
