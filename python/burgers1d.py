@@ -676,18 +676,28 @@ class Rom(object):
         return us
 
 
+#    def _precompute_flux_rom(self,U):
+#        # pre-compute flux
+#        N = U.shape[0]
+#        m = U.shape[1]
+#        F = np.zeros((m,m,m))
+#        for i in range(m):
+#            for j in range(m):
+#                for l in range(m):
+#                    F[i,j,l] -= .5\
+#                             *np.sum(U[1:,i]*U[1:,j]*U[1:,l] - U[1:,i]*U[:(N-1),j]*U[:(N-1),l])
+#                    F[i,j,l] -= .5\
+#                             *np.sum(U[0,i]*U[1,j]*U[1,l] - U[0,i]*U[0,j]*U[0,l])
+#        return F
+
     def _precompute_flux_rom(self,U):
         # pre-compute flux
         N = U.shape[0]
         m = U.shape[1]
-        F = np.zeros((m,m,m))
-        for i in range(m):
-            for j in range(m):
-                for l in range(m):
-                    F[i,j,l] -= .5\
-                             *np.sum(U[1:,i]*U[1:,j]*U[1:,l] - U[1:,i]*U[:(N-1),j]*U[:(N-1),l])
-                    F[i,j,l] -= .5\
-                             *np.sum(U[0,i]*U[1,j]*U[1,l] - U[0,i]*U[0,j]*U[0,l])
+        F = - .5*(np.einsum('ij,ik,il->jkl',U[1:,:],U[1:,:],U[1:,:])  \
+                -  np.einsum('ij,ik,il->jkl',U[1:,:],U[:(N-1),:],U[:(N-1),:])) \
+             - .5*(np.einsum('j,k,l->jkl',U[0,:],U[1,:],U[1,:]) \
+                -  np.einsum('j,k,l->jkl',U[0,:],U[0,:],U[0,:])) 
         return F
 
 
@@ -717,7 +727,7 @@ class Rom(object):
         mu1_array = np.array([mu1 ** j for j in range(p)])
         r = np.array(r).flatten()
         dr = dt/h*np.dot(np.dot(F,r),r) + dt*np.dot(src,mu1_array)
-        dr = (dr - np.dot(dr,bc) / np.linalg.norm(bc)**2 * bc) 
+        dr = dr - np.dot(dr,bc) / np.linalg.norm(bc)**2 * bc 
         #r = r + dt/h*np.dot(np.dot(F,r),r) + dt*np.dot(src,mu1_array)
         r = r + dr
         
@@ -1240,10 +1250,8 @@ class Rom(object):
                 bc_fname = \
                         '_output/bc_' +str(n)+ '_' +str(m)+ '.npy'
                 bc = np.load(bc_fname)
-                #rbc = np.zeros(m0)
-                #for i in range(m0):
-                #    rbc[i] = np.dot(bc,W[:,i])
-                rbc = np.dot(bc,W)
+                #rbc = np.dot(bc,W)
+                rbc = rbasis[0,:m0]
                 bc_fname = \
                         '_output/rbc_' +str(n)+ '_' +str(m)+ '.npy'
                 np.save(bc_fname,rbc)

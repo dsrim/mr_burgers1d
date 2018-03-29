@@ -7,14 +7,12 @@ import matplotlib.pyplot as pl
 Rom0 = Rom()
 
 Rom0.sample_hfm(N=250,dt=0.0125,xl=0.,xr=100.,M=4000)
-#Rom0.sample_hfm(N=250,xl=0.,xr=200.,dt=0.006125/2.,M=8000)
-#Rom0.sample_hfm(N=500,xl=0.,xr=200.,dt=0.0125,M=8000)
 Rom0.plot_hfm_solution()
 
 if 1:
     Rom0.build_bases(tol=1e-10,max_basis_size=200,Mfinal=50,t_interval=20,\
                    nalpha=4,P=4)
-    #Rom0.save()
+    Rom0.save_data()
 
     mu0 = [7.2,0.04]
     Rom0.run_rom(mu=mu0,evaluate=True,M0=50)
