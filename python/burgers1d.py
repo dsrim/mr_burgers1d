@@ -720,14 +720,15 @@ class Rom(object):
         return V
 
 
-    def _time_step_rom(self,r,F,src,dt,mu1,bc):
+    def _rom_time_step(self,r,F,src,dt,mu1,bc):
         
         h = self._h
         p = src.shape[1]
         mu1_array = np.array([mu1 ** j for j in range(p)])
         r = np.array(r).flatten()
         dr = dt/h*np.dot(np.dot(F,r),r) + dt*np.dot(src,mu1_array)
-        dr = dr - np.dot(dr,bc) / np.linalg.norm(bc)**2 * bc 
+        bc = bc / np.linalg.norm(bc)
+        dr = dr - np.dot(dr,bc)*bc
         #r = r + dt/h*np.dot(np.dot(F,r),r) + dt*np.dot(src,mu1_array)
         r = r + dr
         
@@ -1205,8 +1206,8 @@ class Rom(object):
                 basis_fname = \
                         '_output/basis_' +str(n)+ '_' +str(m)+ '.npy'
                 basis = np.load(basis_fname)
-                m2 = min([basis.shape[1], W.shape[0]])
-                rbasis = np.dot(basis[:,:m2],W[:m2,:])
+                #m2 = min([basis.shape[1], W.shape[0]])
+                rbasis = np.dot(basis[:,:m1],W)
                 rbasis_fname = \
                         '_output/rbasis_' +str(n)+ '_' +str(m)+ '.npy'
                 np.save(rbasis_fname,rbasis)
@@ -1216,17 +1217,8 @@ class Rom(object):
                 F_fname = \
                         '_output/F_' +str(n)+ '_' +str(m)+ '.npy'
                 F = np.load(F_fname)
-                I,J,K = np.meshgrid(range(m0),range(m0),range(m0))
-                Indices = np.array([I.flatten(),J.flatten(),K.flatten()]).T
-                rF = self._dot3d(F,W,W,W)
+                rF = self._dot3d(F,W,W,W)   # faster than einsum
                 
-                #rF0 = np.zeros((m0,m0,m0))
-                #for ii in range(Indices.shape[0]):
-                #    i = Indices[ii,0]
-                #    j = Indices[ii,1]
-                #    k = Indices[ii,2]
-                #    rF0[i,j,k] = \
-                #                np.dot(np.dot(np.dot(F,W[:,k]),W[:,j]),W[:,i])
                 rF_fname = \
                         '_output/rF_' +str(n)+ '_' +str(m)+ '.npy'
                 np.save(rF_fname,rF)
@@ -1246,15 +1238,16 @@ class Rom(object):
                 np.save(rsrc_fname,rsrc)
                 
                 # reduce BCs
-                print('- computing BC...')
-                bc_fname = \
-                        '_output/bc_' +str(n)+ '_' +str(m)+ '.npy'
-                bc = np.load(bc_fname)
+                print('- computing reduced BC...')
+                #bc_fname = \
+                        #'_output/bc_' +str(n)+ '_' +str(m)+ '.npy'
+                #bc = np.load(bc_fname)
                 #rbc = np.dot(bc,W)
                 rbc = rbasis[0,:m0]
-                bc_fname = \
+                rbc /= np.linalg.norm(rbc)
+                rbc_fname = \
                         '_output/rbc_' +str(n)+ '_' +str(m)+ '.npy'
-                np.save(bc_fname,rbc)
+                np.save(rbc_fname,rbc)
 
                 # reduce transition list
                 if (m > 0):
@@ -1421,7 +1414,7 @@ class Rom(object):
         #      load transition_list, F_list, src_list, basis_list into memory
         # load basis/flux/src over time
         
-        time_step_rom = self._time_step_rom
+        rom_time_step = self._rom_time_step
 
         M_0 = M_list[0]
         U = basis_list[0][:,:M_0]
@@ -1465,7 +1458,7 @@ class Rom(object):
             F   =   F_list[i0_old]
             src = src_list[i0_old]
             bc = bc_list[i0_old]
-            r1 = time_step_rom(r1,F,src,dt,mu1,bc)
+            r1 = rom_time_step(r1,F,src,dt,mu1,bc)
             r1 = np.array(r1).flatten() 
             
             r_list.append(r1.copy())
@@ -1476,7 +1469,7 @@ class Rom(object):
                     fname = '_output/rbasis_' + str(k) + '_' + str(i0_old) + '.npy'
                 else:
                     fname = '_output/basis_' + str(k) + '_' + str(i0_old) + '.npy'
-                Usmall = np.load(fname)
+                Usmall = basis_list[i0_old]
                 ua = np.dot(Usmall,r1)
                 self._rom_ra_list.append(ua)
                 self._rom_ra = ua
