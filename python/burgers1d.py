@@ -44,7 +44,7 @@ class Rom(object):
         self._rom_src = []          # ROM source functions
         self._rom_M = []            # ROM basis numbers
         self._rom_T = []            # ROM transition matrices
-        self._times_index_list = [] # ROM grid-points in time
+        self._time_index_list = [] # ROM grid-points in time
 
         self._rom_reduced = False   # ROM basis reduction flag
         self._rom_set_up = False   # ROM basis reduction flag
@@ -979,7 +979,7 @@ class Rom(object):
             for j in range(len(time_index_list)-1):
                 
                 basis_j = []    # basis for time-slice
-                print('building basis at time-step n = ' \
+                print('- building basis at time-step n = ' \
                           + str(time_index_list[j]))
                 
                 for mu in mu_list:
@@ -1047,7 +1047,7 @@ class Rom(object):
 
                 # compute boundary conditions
                 bc_list.append( U[0,:M_k] )
-                print('done')
+                print('= done')
 
             #TODO: following 4 lines necessary?
             self._rom_F.append(F_list)
@@ -1110,7 +1110,7 @@ class Rom(object):
             np.save(M_fname,M_list)
 
 
-    def mc_sample(self,nsols=1000):
+    def mc_sample(self,nsols=1000,M0=4000):
         r"""
             further reduction of the model based on sampling
         """
@@ -1133,7 +1133,7 @@ class Rom(object):
                     random_mu_list.append(mu0)
             
                     print('running rom..')
-                    self.run_rom(mu=mu0,frugal=True,M0=4000)
+                    self.run_rom(mu=mu0,frugal=True,M0=M0)
                     print('= done')
                     rs_list.append(copy(self._rom_r_list))
                     print('sample number: ' + str(j))
@@ -1157,7 +1157,7 @@ class Rom(object):
 
         return E
 
-    def _reduce_bases(self,tol=1e-6):
+    def _reduce_bases(self,tol=1e-6,max_nbasis=150,max_time_step=2000):
         r"""
             compute further reduction using low-dimensional space 
         
@@ -1177,15 +1177,18 @@ class Rom(object):
             M = snapshot_list.shape[1]      # number of time intervals
             rM_list = []
 
-            for m in range(len(M_list)):
+            for m in range(len(M_list)-1):
                 
                 m1 = M_list[m]
                 sampled_sols_list = []
                 for i in range(til[m]-1,til[m+1]-1):
-                    new_array = np.array([snapshot_list[:,i][k].T \
-                        for k in range(snapshot_list.shape[0])]).T
-                    sampled_sols_list.append(new_array)   
+                    if i < max_time_step-1:
+                        new_array = np.array([snapshot_list[:,i][k].T \
+                            for k in range(snapshot_list.shape[0])]).T
+                        sampled_sols_list.append(new_array)   
                 
+                if len(sampled_sols_list) == 0:
+                    break
                 sampled_sols = np.concatenate(sampled_sols_list,axis=1)
                 print(sampled_sols.shape)
                 
@@ -1195,7 +1198,8 @@ class Rom(object):
                 # compute reduced basis by truncating singular values,
                 # store no. of reduced basis
                 m0 = \
-                    next((i for i,si in enumerate(s/s[0]) if si < tol),M0)
+                    next((i for i,si in enumerate(s/s[0]) if si < tol),\
+                         max_nbasis)
                 print('m = ' +str(m)+ ' | no. of reduced basis m0 = ' \
                     + str(m0) + ' / m1 = ' + str(m1))
                 rM_list.append(m0)  
@@ -1269,14 +1273,15 @@ class Rom(object):
         self._rom_reduced = True
     
 
-    def _random_mu(self):
+    def _random_mu(self,seed=True):
+        np.random.seed(12345)
         mu = np.random.rand(2)
         mu[0] = mu[0]*(9. - 3.) + 3.
         mu[1] = mu[1]*(0.075 - 0.02) + 0.02
         return mu
 
     def _set_up_rom(self,reset=False,load_basis=False,\
-                         simplex_list=None, time_interval_list=None):
+                         simplex_list=None, time_interval_list=None, M0=4000):
         r"""
         
         Load bases / F / src / transition_list into memory
@@ -1401,7 +1406,7 @@ class Rom(object):
             bc_list = self._rom_bc[0]
             transition_list = self._rom_T[0]
         else:
-            self._set_up_rom(reset=reread,load_basis=evaluate)
+            self._set_up_rom(reset=reread,load_basis=evaluate,M0=M0)
     
             M_list = self._rom_M[k]
             F_list = self._rom_F[k]
@@ -1494,7 +1499,9 @@ class Rom(object):
         pl.close(f)
 
 
-    def compare_rom_solution(self,mu,interval=10):
+    def compare_rom_solution(self,mu,interval=10,\
+                             sol_plot_fname='rom_solution.png',\
+                             err_plot_fname='rom_error.png'):
 
         ra_list = self._rom_ra_list
         L = len(ra_list)
@@ -1512,8 +1519,11 @@ class Rom(object):
             ax1.plot(x,ra - u[:,j],'royalblue')
 
         # TODO save to _plots subdir?
-        f0.savefig('rom_solution.png',dpi=dpi)
-        f1.savefig('rom_error.png',dpi=dpi)
+        k = self._rom_tri.find_simplex(mu)
+        ax0.set_title('element = ' + str(k))
+        ax1.set_title('element = ' + str(k))
+        f0.savefig(sol_plot_fname,dpi=dpi)
+        f1.savefig(err_plot_fname,dpi=dpi)
         
         pl.close(f0)
         pl.close(f1)
