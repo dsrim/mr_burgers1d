@@ -1273,8 +1273,7 @@ class Rom(object):
         self._rom_reduced = True
     
 
-    def _random_mu(self,seed=True):
-        np.random.seed(12345)
+    def _random_mu(self):
         mu = np.random.rand(2)
         mu[0] = mu[0]*(9. - 3.) + 3.
         mu[1] = mu[1]*(0.075 - 0.02) + 0.02
