@@ -22,19 +22,24 @@ Rom0.load_data()
 #Rom0._reduce_bases(tol=1e-6)
 Rom0._rom_reduced=True
 
+mu_list = []
 rs_list = []
-for k in range(10000):
+for k in range(100000):
     mu0 = Rom0._random_mu()
     Rom0.run_rom(mu=mu0)
     print('sample no. = ' + str(k))
+    mu_list.append(copy(mu0))
     rs_list.append(copy(Rom0._rom_r_list))
 
-    if not (k / 2000):
-        l = k / 1000
-        fname = 'sampled_rom_sols.npy'
-        print('- saving to file: ' + fname)
-        np.save(fname, rs_list)
+    if np.mod(k+1 , 2000) == 0:
+        sol_fname = 'sampled_rom_sols_' + str(k) + '.npy'
+        mu_fname = 'sampled_mu_' + str(k) + '.npy'
+        print('- saving to file: ' + sol_fname)
+        print('- saving to file: ' + mu_fname)
+        np.save(mu_fname, mu_list)
+        np.save(sol_fname, rs_list)
         rs_list = []
+        mu_list = []
     
 
 #for k in range(100):
