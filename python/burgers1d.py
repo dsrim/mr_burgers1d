@@ -44,7 +44,10 @@ class Rom(object):
         self._rom_src = []          # ROM source functions
         self._rom_M = []            # ROM basis numbers
         self._rom_T = []            # ROM transition matrices
-        self._times_index_list = [] # ROM grid-points in time
+        self._time_index_list = [] # ROM grid-points in time
+
+        self._rom_reduced = False   # ROM basis reduction flag
+        self._rom_set_up = False   # ROM basis reduction flag
 
         self._dpi = 200             # dpi for savefigs
 
@@ -673,18 +676,28 @@ class Rom(object):
         return us
 
 
+#    def _precompute_flux_rom(self,U):
+#        # pre-compute flux
+#        N = U.shape[0]
+#        m = U.shape[1]
+#        F = np.zeros((m,m,m))
+#        for i in range(m):
+#            for j in range(m):
+#                for l in range(m):
+#                    F[i,j,l] -= .5\
+#                             *np.sum(U[1:,i]*U[1:,j]*U[1:,l] - U[1:,i]*U[:(N-1),j]*U[:(N-1),l])
+#                    F[i,j,l] -= .5\
+#                             *np.sum(U[0,i]*U[1,j]*U[1,l] - U[0,i]*U[0,j]*U[0,l])
+#        return F
+
     def _precompute_flux_rom(self,U):
         # pre-compute flux
         N = U.shape[0]
         m = U.shape[1]
-        F = np.zeros((m,m,m))
-        for i in range(m):
-            for j in range(m):
-                for l in range(m):
-                    F[i,j,l] -= .5\
-                             *np.sum(U[1:,i]*U[1:,j]*U[1:,l] - U[1:,i]*U[:(N-1),j]*U[:(N-1),l])
-                    F[i,j,l] -= .5\
-                             *np.sum(U[0,i]*U[1,j]*U[1,l] - U[0,i]*U[0,j]*U[0,l])
+        F = - .5*(np.einsum('ij,ik,il->jkl',U[1:,:],U[1:,:],U[1:,:])  \
+                -  np.einsum('ij,ik,il->jkl',U[1:,:],U[:(N-1),:],U[:(N-1),:])) \
+             - .5*(np.einsum('j,k,l->jkl',U[0,:],U[1,:],U[1,:]) \
+                -  np.einsum('j,k,l->jkl',U[0,:],U[0,:],U[0,:])) 
         return F
 
 
@@ -707,14 +720,15 @@ class Rom(object):
         return V
 
 
-    def _time_step_rom(self,r,F,src,dt,mu1,bc):
+    def _rom_time_step(self,r,F,src,dt,mu1,bc):
         
         h = self._h
         p = src.shape[1]
         mu1_array = np.array([mu1 ** j for j in range(p)])
         r = np.array(r).flatten()
         dr = dt/h*np.dot(np.dot(F,r),r) + dt*np.dot(src,mu1_array)
-        dr = (dr - np.dot(dr,bc) / np.linalg.norm(bc)**2 * bc) 
+        bc = bc / np.linalg.norm(bc)
+        dr = dr - np.dot(dr,bc)*bc
         #r = r + dt/h*np.dot(np.dot(F,r),r) + dt*np.dot(src,mu1_array)
         r = r + dr
         
@@ -881,11 +895,8 @@ class Rom(object):
                 ax[1,1].plot(u10,'g');
                 ax[2,1].plot(u01,'r');  
         
-            #     ax[0,0].plot(u00p,'b')
                 ax[0,0].plot(u00m,'b--')
-            #     ax[1,0].plot(u10p,'g')
                 ax[1,0].plot(u10m,'g--')
-            #     ax[2,0].plot(u01p,'r')
                 ax[2,0].plot(u01m,'r--')
             
             uaa = self._dinterp2D(u10,u01,u00,c,offset=0.,return_parts=False)
@@ -894,21 +905,15 @@ class Rom(object):
                 pl.figure(figsize=(15,2))
                 pl.plot(uaa)
                 pl.title(str(j))
-        #      pl.plot(uaa,'r')
-        #      print(u00[0],u10[0],u01[0])
-        #      print(1. - c[0] - c[1])*u00[0] + c[0]*u10[0] + c[1]*u01[0]
             
             uaa_snapshot.append(uaa)
-    #         uaa_snapshot += uaa_list
-        # f,ax = pl.subplots(ncols=1,nrows=1,figsize=(10,3));
         
-        # uaa_snapshot.append(np.ones(uaa.shape))
         uaa_snapshot = np.array(uaa_snapshot).T
         return uaa_snapshot
 
     
-    def build_rom(self,tol=1e-10,Mfinal=80,max_basis_size=200,\
-                  t_interval=5,P=5,nalpha=5,save_raw=False):
+    def build_bases(self,tol=1e-10,Mfinal=80,max_basis_size=200,\
+                    t_interval=5,P=5,p = 40,nalpha=5,save_raw=False):
         r'''
 
         P = 5            no. of samples per triangular element
@@ -939,8 +944,7 @@ class Rom(object):
         z = get_uniform_samples(P)    # get uniformly-spaced samples
 
         # set up time-intervals for sampling
-        K = t_interval    # sample step-size
-        time_index_list = [1,2] + range(3,Mfinal,K)
+        time_index_list = [1,2] + range(3,Mfinal,t_interval)
         self._time_index_list = time_index_list
         
         if 0:
@@ -975,7 +979,7 @@ class Rom(object):
             for j in range(len(time_index_list)-1):
                 
                 basis_j = []    # basis for time-slice
-                print('building basis at time-step n = ' \
+                print('- building basis at time-step n = ' \
                           + str(time_index_list[j]))
                 
                 for mu in mu_list:
@@ -997,10 +1001,6 @@ class Rom(object):
 
             for j in range(len(time_index_list)-1):
             
-                #if j == 0:
-                #    basis_j3 = basis_all[j] + basis_all[j+1]
-                #else:
-                #    basis_j3 = basis_all[j-1] + basis_all[j] 
                 if j == 0:
                     basis_j3 = basis_all[j] + basis_all[j+1]
                 else:
@@ -1042,13 +1042,12 @@ class Rom(object):
                 F_list.append(F)
             
                 # compute source term
-                p = 40
                 src = precompute_src_rom(U[:,:M_k],p=p)
                 src_list.append(src)
 
                 # compute boundary conditions
                 bc_list.append( U[0,:M_k] )
-                print('done')
+                print('= done')
 
             #TODO: following 4 lines necessary?
             self._rom_F.append(F_list)
@@ -1074,7 +1073,9 @@ class Rom(object):
 
             self._rom_T.append(transition_list)
 
-            # save then remove basis functions
+            ##                                              ##
+            ##      save generated lists to output files    ##
+            ##                                              ##
             L = len(basis_list)
             for k in range(L):
                 m = L - 1 - k
@@ -1109,8 +1110,272 @@ class Rom(object):
             np.save(M_fname,M_list)
 
 
+    def mc_sample(self,nsols=1000,M0=4000):
+        r"""
+            further reduction of the model based on sampling
+        """
+
+        np.random.seed(12345)
+
+        # generate samples
+        for n in range(self._rom_tri.nsimplex):
+            j = 0
+            random_mu_list = []
+            random_mu = self._random_mu
+            rs_list = []
+
+            while(len(random_mu_list) < nsols):
+                # sample random variable
+                mu0 = random_mu()
+                
+                n0 = int(self._rom_tri.find_simplex(mu0))
+                if n0 == n:
+                    random_mu_list.append(mu0)
+            
+                    print('running rom..')
+                    self.run_rom(mu=mu0,frugal=True,M0=M0)
+                    print('= done')
+                    rs_list.append(copy(self._rom_r_list))
+                    print('sample number: ' + str(j))
+                    j += 1
+            
+            mu_fname = '_output/sampled_mu_' + str(n) + '.npy'
+            sols_fname = '_output/sampled_rom_sols_' + str(n) + '.npy'
+            np.save(mu_fname,random_mu_list)
+            np.save(sols_fname,rs_list)
+            self._rom_set_up = False
+
+    def _dot3d(self,A,B,C,D):
+        r"""
+            compute A_{i,j,k} B_{i,I} C_{j,J} D_{k,K}
+            resulting in: an array E of size {I,J,K}
+        """
+
+        E = np.dot(A,D)
+        E = np.transpose(np.dot(np.transpose(E,(0,2,1)),C),(0,2,1))
+        E = np.transpose(np.dot(np.transpose(E,(2,1,0)),C),(2,1,0))
+
+        return E
+
+    def _reduce_bases(self,tol=1e-6,max_nbasis=150,max_time_step=2000):
+        r"""
+            compute further reduction using low-dimensional space 
+        
+        """
+        N = self._rom_tri.nsimplex
+        til = self._time_index_list.tolist()
+        M = len(til)
+        
+        for n in range(N):
+            # compute reduction
+            mu_fname = '_output/sampled_mu_' + str(n) + '.npy'
+            sols_fname = '_output/sampled_rom_sols_' + str(n) + '.npy'
+
+            M_fname = '_output/M_' + str(n) + '.npy'
+            M_list = np.load(M_fname)
+            snapshot_list = np.load(sols_fname)
+            M = snapshot_list.shape[1]      # number of time intervals
+            rM_list = []
+
+            for m in range(len(M_list)-1):
+                
+                m1 = M_list[m]
+                sampled_sols_list = []
+                for i in range(til[m]-1,til[m+1]-1):
+                    if i < max_time_step-1:
+                        new_array = np.array([snapshot_list[:,i][k].T \
+                            for k in range(snapshot_list.shape[0])]).T
+                        sampled_sols_list.append(new_array)   
+                
+                if len(sampled_sols_list) == 0:
+                    break
+                sampled_sols = np.concatenate(sampled_sols_list,axis=1)
+                print(sampled_sols.shape)
+                
+                M0 = sampled_sols.shape[1]      # number of "generated" bases
+                W,s,V = np.linalg.svd(sampled_sols,full_matrices=0)
+
+                # compute reduced basis by truncating singular values,
+                # store no. of reduced basis
+                m0 = \
+                    next((i for i,si in enumerate(s/s[0]) if si < tol),\
+                         max_nbasis)
+                print('m = ' +str(m)+ ' | no. of reduced basis m0 = ' \
+                    + str(m0) + ' / m1 = ' + str(m1))
+                rM_list.append(m0)  
+                W = W[:,:m0]
+                
+                # compute basis
+                print('- computing basis...')
+                basis_fname = \
+                        '_output/basis_' +str(n)+ '_' +str(m)+ '.npy'
+                basis = np.load(basis_fname)
+                #m2 = min([basis.shape[1], W.shape[0]])
+                rbasis = np.dot(basis[:,:m1],W)
+                rbasis_fname = \
+                        '_output/rbasis_' +str(n)+ '_' +str(m)+ '.npy'
+                np.save(rbasis_fname,rbasis)
+
+                # reduce flux
+                print('- computing flux...')
+                F_fname = \
+                        '_output/F_' +str(n)+ '_' +str(m)+ '.npy'
+                F = np.load(F_fname)
+                rF = self._dot3d(F,W,W,W)   # faster than einsum
+                
+                rF_fname = \
+                        '_output/rF_' +str(n)+ '_' +str(m)+ '.npy'
+                np.save(rF_fname,rF)
+                
+                # reduce source
+                print('- computing source...')
+                src_fname = \
+                        '_output/src_' +str(n)+ '_' +str(m)+ '.npy'
+                src = np.load(src_fname)
+                p = src.shape[1]
+                #rsrc = np.zeros((m0,p))
+                #for i in range(m0):
+                #    rsrc[i,:] = np.dot(W[:,i],src)
+                rsrc = np.dot(W.T,src)
+                rsrc_fname = \
+                        '_output/rsrc_' +str(n)+ '_' +str(m)+ '.npy'
+                np.save(rsrc_fname,rsrc)
+                
+                # reduce BCs
+                print('- computing reduced BC...')
+                #bc_fname = \
+                        #'_output/bc_' +str(n)+ '_' +str(m)+ '.npy'
+                #bc = np.load(bc_fname)
+                #rbc = np.dot(bc,W)
+                rbc = rbasis[0,:m0]
+                rbc /= np.linalg.norm(rbc)
+                rbc_fname = \
+                        '_output/rbc_' +str(n)+ '_' +str(m)+ '.npy'
+                np.save(rbc_fname,rbc)
+
+                # reduce transition list
+                if (m > 0):
+                    print('- computing transition matrix...')
+                    T_fname =  \
+                        '_output/transition_'+str(n)+'_'+str(m) + '.npy'
+                    T = np.load(T_fname)
+                    Tw = np.dot(T,W_old)
+                    rT = np.dot(W.T,Tw)
+                    rT_fname =  \
+                        '_output/rtransition_'+str(n)+'_'+str(m) + '.npy'
+                    np.save(rT_fname,rT)
+                W_old = W                    
+                print('= done.')
+        
+            rM_fname = \
+                       '_output/rM_' + str(n) + '.npy'
+            np.save(rM_fname, rM_list)
+        self._rom_reduced = True
+    
+
+    def _random_mu(self):
+        mu = np.random.rand(2)
+        mu[0] = mu[0]*(9. - 3.) + 3.
+        mu[1] = mu[1]*(0.075 - 0.02) + 0.02
+        return mu
+
+    def _set_up_rom(self,reset=False,load_basis=False,\
+                         simplex_list=None, time_interval_list=None, M0=4000):
+        r"""
+        
+        Load bases / F / src / transition_list into memory
+
+        """
+
+        if reset:
+            self._rom_set_up = False
+
+        if not self._rom_set_up:
+            
+            if self._rom_reduced:
+                prefix = 'r'
+            else:
+                prefix = ''
+            
+            K = self._rom_tri.nsimplex
+            M = len(self._time_index_list) 
+
+            if simplex_list == None:
+                k_list = range(K)
+            else:
+                k_list = simplex_list
+
+            if time_interval_list == None:
+                #TODO: not to be confused with usual time_index_list
+                m_list = range(M-1)
+            else:
+                m_list = time_interval_list
+
+            self._rom_basis = []
+            self._rom_F = []
+            self._rom_src = []
+            self._rom_bc = []
+            self._rom_T = []
+            self._rom_M = []
+            
+            for k in k_list:
+                M_fname = '_output/' + prefix + \
+                        'M_' + str(k) + '.npy'
+                M_list = np.load(M_fname)
+                transition_list = []
+                F_list = []
+                src_list = []
+                basis_list = []
+                bc_list = []
+                for m in m_list:
+                    basis_fname = '_output/' + prefix + \
+                            'basis_' +str(k)+ '_' +str(m)+ '.npy'
+                    F_fname = '_output/' + prefix + \
+                            'F_' +str(k)+ '_' +str(m)+ '.npy'
+                    src_fname = '_output/' + prefix + \
+                            'src_' +str(k)+ '_' +str(m)+ '.npy'
+                    T_fname = '_output/' + prefix + \
+                            'transition_'+str(k)+'_'+str(m+1) + '.npy'
+                    bc_fname = '_output/' + prefix + \
+                            'bc_' +str(k)+ '_' +str(m)+ '.npy'
+    
+                    F = np.load(F_fname)
+                    src = np.load(src_fname)
+                    bc = np.load(bc_fname)
+                    
+                    # load basis only if told to evaluate
+                    # TODO: .copy() necessary?
+                    if (m == 0) or ((m > 0) and load_basis):
+                        basis = np.load(basis_fname)
+                        basis_list.append(basis.copy())
+                    F_list.append(F.copy())
+                    src_list.append(src.copy())
+                    bc_list.append(bc.copy())
+                    
+                    # transition list of length L-2 
+                    if (m < M-2):
+                        T = np.load(T_fname)
+                        transition_list.append(T.copy())
+                
+                self._rom_M.append(M_list)
+                self._rom_F.append(F_list)
+                self._rom_src.append(src_list)
+                self._rom_basis.append(basis_list)
+                self._rom_bc.append(bc_list)
+                self._rom_T.append(transition_list)
+                
+                self._rom_set_up = True
+        else:
+            print('ROM already set up')
+            pass
+
+#    def reduce_rom(self):
+#
+#        self.run_rom(mu=mu0)
+    
     def run_rom(self,mu=[7.5, 0.035],M0=4000,\
-                     evaluate=False,verbose=False):
+                     evaluate=False,verbose=False,reread=False,\
+                     frugal=False):
         r"""
         run reduced order model
         kwargs
@@ -1124,53 +1389,36 @@ class Rom(object):
         get_time_index = self._get_time_index        
 
         tri = self._rom_tri
+        
         k = tri.find_simplex(mu)        # triangle number
 
         time_index_list = self._time_index_list
         L = len(time_index_list)
         
+        if frugal:
+            self._set_up_rom(simplex_list=[k])
+            
+            M_list = self._rom_M[0]
+            F_list = self._rom_F[0]
+            src_list = self._rom_src[0]
+            basis_list = self._rom_basis[0]
+            bc_list = self._rom_bc[0]
+            transition_list = self._rom_T[0]
+        else:
+            self._set_up_rom(reset=reread,load_basis=evaluate,M0=M0)
+    
+            M_list = self._rom_M[k]
+            F_list = self._rom_F[k]
+            src_list = self._rom_src[k]
+            basis_list = self._rom_basis[k]
+            bc_list = self._rom_bc[k]
+            transition_list = self._rom_T[k]
         
         #TODO: create setup_rom() to set up the reduced order model
         #      load transition_list, F_list, src_list, basis_list into memory
         # load basis/flux/src over time
-        #transition_list = self._rom_T[k]
-        #F_list = self._rom_F[k]
-        #src_list = self._rom_src[k]
-        #basis_list = self._rom_basis[k]
-        bc_list = self._rom_bc[k]
-        M_fname = \
-                '_output/M_' + str(k) + '.npy'
-        M_list = np.load(M_fname)
-        transition_list = []
-        F_list = []
-        src_list = []
-        basis_list = []
-        for m in range(L-1):
-            basis_fname = \
-                    '_output/basis_' +str(k)+ '_' +str(m)+ '.npy'
-            F_fname = \
-                    '_output/F_' +str(k)+ '_' +str(m)+ '.npy'
-            src_fname = \
-                    '_output/src_' +str(k)+ '_' +str(m)+ '.npy'
-            T_fname = \
-                    '_output/transition_'+str(k)+'_'+str(m+1) + '.npy'
-
-            F = np.load(F_fname)
-            src = np.load(src_fname)
-            
-            # load basis only if told to evaluate
-            if (m == 0) or ((m > 0) and evaluate):
-                basis = np.load(basis_fname)
-                basis_list.append(basis.copy())
-            F_list.append(F.copy())
-            src_list.append(src.copy())
-            # transition list of length L-2 
-            if (m < L-2):
-                T = np.load(T_fname)
-                transition_list.append(T.copy())
-
         
-        time_step_rom = self._time_step_rom
+        rom_time_step = self._rom_time_step
 
         M_0 = M_list[0]
         U = basis_list[0][:,:M_0]
@@ -1214,15 +1462,18 @@ class Rom(object):
             F   =   F_list[i0_old]
             src = src_list[i0_old]
             bc = bc_list[i0_old]
-            r1 = time_step_rom(r1,F,src,dt,mu1,bc)
+            r1 = rom_time_step(r1,F,src,dt,mu1,bc)
             r1 = np.array(r1).flatten() 
             
             r_list.append(r1.copy())
             
             if evaluate:
                 M_k = M_list[i0_old]
-                fname = '_output/basis_' + str(k) + '_' + str(i0_old) + '.npy'
-                Usmall = np.load(fname)
+                if self._rom_reduced:
+                    fname = '_output/rbasis_' + str(k) + '_' + str(i0_old) + '.npy'
+                else:
+                    fname = '_output/basis_' + str(k) + '_' + str(i0_old) + '.npy'
+                Usmall = basis_list[i0_old]
                 ua = np.dot(Usmall,r1)
                 self._rom_ra_list.append(ua)
                 self._rom_ra = ua
@@ -1247,7 +1498,9 @@ class Rom(object):
         pl.close(f)
 
 
-    def compare_rom_solution(self,mu,interval=10):
+    def compare_rom_solution(self,mu,interval=10,\
+                             sol_plot_fname='rom_solution.png',\
+                             err_plot_fname='rom_error.png'):
 
         ra_list = self._rom_ra_list
         L = len(ra_list)
@@ -1265,8 +1518,11 @@ class Rom(object):
             ax1.plot(x,ra - u[:,j],'royalblue')
 
         # TODO save to _plots subdir?
-        f0.savefig('rom_solution.png',dpi=dpi)
-        f1.savefig('rom_error.png',dpi=dpi)
+        k = self._rom_tri.find_simplex(mu)
+        ax0.set_title('element = ' + str(k))
+        ax1.set_title('element = ' + str(k))
+        f0.savefig(sol_plot_fname,dpi=dpi)
+        f1.savefig(err_plot_fname,dpi=dpi)
         
         pl.close(f0)
         pl.close(f1)
@@ -1337,3 +1593,46 @@ class Rom(object):
             pickle.dump(self._rom_tri, output, pickle.HIGHEST_PROTOCOL)
 
 
+    def load_data(self):
+        r"""
+            
+            load data 
+            
+        """
+        
+        import pickle
+
+        with open('_output/info.txt',mode='r') as input_file:
+            for row in input_file:
+                val = row.split('=')[1]
+                if 'N' == row.split('=')[0][0]:
+                    N = int(val)
+                if 'M' == row.split('=')[0][0]:
+                    M = int(val)
+                elif 'h' == row.split('=')[0][0]:
+                    h = float(val)
+                elif 'dt' == row.split('=')[0][0:2]:
+                    dt = float(val)
+                elif 'P' == row.split('=')[0][0]:
+                    P = int(val)
+
+        self._N = N
+        self._h = h
+        self._hfm_M = M
+        self._hfm_dt = dt
+        self._rom_P = P
+
+        # spatial grid
+        fname = '_output/x.npy'
+        self._x = np.load(fname)
+
+        # time_index_list
+        fname = '_output/time_index.npy'
+        self._time_index_list = np.load(fname)
+        
+        # pickle triangulation
+        fname = '_output/tri.pkl'
+        with open(fname, 'r') as input_pkl:
+            self._rom_tri = pickle.load(input_pkl)
+
+        
