@@ -638,7 +638,7 @@ class Rom(object):
 
     
     def _get_W(self,v0,v1,alphas,offsets=(0.,0.),\
-               return_pieces=False,return_svd=True,plot_parts=False):
+               return_pieces=True,return_svd=True,plot_parts=False):
         r"""
         construct local basis using displacement interpolation and then 
         performing SVD on the snapshot matrix
@@ -660,6 +660,7 @@ class Rom(object):
         
         # perform displacement interpolation by parts
         us = dinterp_alphas(v0,v1,alphas,offsets=offsets)
+
         
         if return_pieces:
             # return individual parts by post-processing us
@@ -684,15 +685,21 @@ class Rom(object):
                         pl.plot(np.cumsum(dum)*supp)
                         pl.savefig('_plots/dum_' + str(k))
                         pl.close()
+            dim = v0.shape
+            us_pieces.append(np.ones(dim))    # append constant fctns
+            for k in range(1,8):
+                ubc0 = np.zeros(dim)
+                ubc0[:k] = 1.
+                us_pieces.append(ubc0.copy())  # append fctns for left-BCs
             
-            us_pieces.append(np.ones(us[-1].shape))
+            us_pieces.append(np.ones(v0.shape))
             us = np.array(us_pieces).T     
             
         else:
-            dim = us[-1].shape
-            us.append(np.ones(dims))    # append constant fctns
+            dim = v0.shape
+            us.append(np.ones(dim))    # append constant fctns
             for k in range(1,8):
-                ubc0 = np.zeros(dims)
+                ubc0 = np.zeros(dim)
                 ubc0[:k] = 1.
                 us.append(ubc0.copy())  # append fctns for left-BCs
             us = np.array(us).T
@@ -705,7 +712,7 @@ class Rom(object):
 
 
     def _dinterp_alphas(self,v0,v1,alphas,\
-                       offsets=(0.,0.),return_pieces=False,return_int=True):
+                       offsets=(0.,0.),return_pieces=True,return_int=True):
         r"""
 
         Perform disp. interpolation by parts in bulk for a given list of
@@ -797,7 +804,7 @@ class Rom(object):
         r = np.array(r).flatten()
         dr = dt/h*np.dot(np.dot(F,r),r) + dt*np.dot(src,mu1_array)
         bc = bc / np.linalg.norm(bc)
-        dr = dr - np.dot(dr,bc)*bc
+        dr = dr - np.dot(dr,bc)*bc  # apply bc
         r = r + dr
         
         return r
@@ -992,7 +999,7 @@ class Rom(object):
 
 
     
-    def build_bases(self,tol=1e-10,Mfinal=80,max_basis_size=200,\
+    def build_basis(self,tol=1e-14,Mfinal=80,max_basis_size=200,\
                     t_interval=5,P=5,Pt=5,p=40,save_snapshot=False,\
                     verbose=False):
         r'''
@@ -1053,9 +1060,6 @@ class Rom(object):
 
         for n in range(tri.nsimplex):
             
-            sys.stdout.write('\nbuilding local basis for element: '+str(n)+'\n')
-            sys.stdout.flush()
-            
             # get mu coordinates
             mu_list = []    # mu values for each sample points in z
             for j in range(z.shape[1]):
@@ -1073,8 +1077,8 @@ class Rom(object):
             for j in range(len(time_index_list)-1):
                 
                 basis_j = []    # basis for time-slice
-                sys.stdout.write(\
-                  '\r= building basis at time-interval n = {:4d}'.format(j))
+                sys.stdout.write('\r({:1d}) constructing basis,  '.format(n)\
+                      +'     time-interval: {:4d}'.format(j) + ' '*25)
                 sys.stdout.flush()
                 
                 for mu in mu_list:
@@ -1093,20 +1097,24 @@ class Rom(object):
                 
                 basis_all.append(basis_j)
 
-
-            for j in range(len(time_index_list)-1):
+            M0 = len(time_index_list)-1
+            for j in range(M0):
             
                 if j == 0:
                     basis_j3 = basis_all[j] + basis_all[j+1]
+                elif ((j > 0) and (j < M0-1)):
+                    basis_j3 = basis_all[j-1] + basis_all[j] + basis_all[j+1]
+                elif j == M0-1:
+                    basis_j3 = basis_all[j-1] + basis_all[j] 
                 else:
                     basis_j3 = basis_all[j] 
                 
                 basis_array_j = np.concatenate(basis_j3, axis=1)
                 U,s,V = np.linalg.svd(basis_array_j,full_matrices=0)
                 s_list.append(s)
-                M_k0 = \
-                    next((i for i,si in enumerate(s/s[0]) if si < tol),100)
-                M_k = min([M_k0, max_basis_size])
+                M_k = \
+                    next((i for i,si in enumerate(s/s[0]) if si < tol),\
+                          max_basis_size)
                 M_list.append(M_k)
                 Usmall = U[:,:M_k] 
                 basis_list.append(Usmall)
@@ -1130,9 +1138,9 @@ class Rom(object):
                 M_k = M_list[k]
                 if M_k > maxM:
                     maxM = M_k
-                sys.stdout.write('\r= precomputing flux,'\
-                         + 'src for time-interval {:4d}/{:4d}'.format(k,K)\
-                                + ' | max no of basis: {:4d}'.format(maxM))
+                sys.stdout.write('\r({:1d}) constructing flux,'.format(n)\
+                         + 'src     time-interval: {:4d}/{:4d}'.format(k,K)\
+                                + ' [d {:3d}]'.format(maxM))
                 sys.stdout.flush()
                 
                 # compute reduced basis 
@@ -1204,6 +1212,8 @@ class Rom(object):
             M_fname = '_output/M_' + str(n) + '.npy'
             np.save(M_fname,M_list)
 
+        sys.stdout.write('\r= done.\n')
+        sys.stdout.flush()
 
     def _mc_sample(self,nsols=1000,M0=4000):
         r"""
@@ -1235,10 +1245,10 @@ class Rom(object):
                 if n0 == n:
                     random_mu_list.append(mu0)
             
-                    self.run_rom(mu=mu0,frugal=True,M0=M0,evaluate=True)
+                    self.run_rom(mu=mu0,frugal=True,M0=M0,evaluate=False)
                     rs_list.append(copy(self._rom_r_list))
-                    sys.stdout.write('\rrunning ROM in triangle '\
-                                + '{:1d}, sample number {:5d}..'.format(n,j+1))
+                    sys.stdout.write('\r({:1d})'.format(n)\
+                                   + ' running ROM, sample {:5d}..'.format(j+1))
                     sys.stdout.flush()
                     j += 1
             
@@ -1270,7 +1280,7 @@ class Rom(object):
         return E
 
     
-    def reduce_bases(self,tol=1e-6,\
+    def reduce_basis(self,tol=1e-6,\
                      max_nbasis=150,M0=400,nsols=1000):
         r"""
         compute POD reduced basis for each local element using sampled basis
@@ -1288,7 +1298,7 @@ class Rom(object):
         self._mc_sample(nsols=nsols,M0=M0)
         N = self._rom_tri.nsimplex
         til = self._time_index_list.tolist()
-        M = len(til)
+        M0 = len(til)-1
         
         for n in range(N):
             # compute reduction
@@ -1298,30 +1308,32 @@ class Rom(object):
             M_fname = '_output/M_'+str(n)+'.npy'
             M_list = np.load(M_fname)
             snapshot_list = np.load(sols_fname)
-            M = snapshot_list.shape[1]      # number of time intervals
+            #M = snapshot_list.shape[1]      # number of time intervals
             rM_list = []
-            print('\n - computing basis for tri {:1d}...'.format(n))
+            sys.stdout.write('\r({:1d}) computing reduced basis ...'.format(n)\
+                             + ' '*20)
+            sys.stdout.flush()
             
-            M0 = len(M_list)-2
-            max_time_step = til[-1]
-            print('max_time_step = ' + str(max_time_step))
+            #print('max_time_step = ' + str(max_time_step))
             
             for m in range(M0):
                 
                 m1 = M_list[m]
                 sampled_sols_list = []
-                # gather snapshots
-                for i in range(til[m]-1,til[m+1]-1):
-                    if i < max_time_step-1:
-                        new_array = np.array([snapshot_list[:,i][k].T \
-                            for k in range(snapshot_list.shape[0])]).T
-                        sampled_sols_list.append(new_array)   
+                
+                # gather snapshots in the time interval 
+                for i in range(til[m],til[m+1]):
+                    for k in range(len(snapshot_list)):
+                        if ((i-1) < len(snapshot_list[k])):
+                            new_array = np.array([snapshot_list[k][i-1].T]).T
+                            sampled_sols_list.append(new_array)
                 
                 if len(sampled_sols_list) == 0:
                     break
+                #TODO rm print([a.shape for a in sampled_sols_list])
                 sampled_sols = np.concatenate(sampled_sols_list,axis=1)
                 
-                M0 = sampled_sols.shape[1]      # number of "generated" bases
+                #M0 = sampled_sols.shape[1]      # number of "generated" bases
                 W,s,V = np.linalg.svd(sampled_sols,full_matrices=0)
 
                 # compute reduced basis by truncating singular values,
@@ -1342,8 +1354,10 @@ class Rom(object):
                 np.save(rbasis_fname,rbasis)
 
                 # reduce flux
-                sys.stdout.write(\
-                    '\r= ({:3d}|{:3d}) computing flux...'.format(m,m0))
+                sys.stdout.write('\r({:1d}) constructing flux '.format(n)\
+                         + '        time-interval: {:4d}/{:4d}'.format(m,M0)\
+                                + ' [d {:3d}]'.format(m0))
+                sys.stdout.flush()
                 F_fname = \
                         '_output/F_' +str(n)+ '_' +str(m)+ '.npy'
                 F = np.load(F_fname)
@@ -1354,8 +1368,10 @@ class Rom(object):
                 np.save(rF_fname,rF)
                 
                 # reduce source
-                sys.stdout.write(\
-                    '\r= ({:3d}|{:3d}) computing source...'.format(m,m0))
+                sys.stdout.write('\r({:1d}) constructing src  '.format(n)\
+                         + '        time-interval: {:4d}/{:4d}'.format(m,M0)\
+                                + ' [d {:3d}]'.format(m0))
+                sys.stdout.flush()
                 src_fname = \
                         '_output/src_' +str(n)+ '_' +str(m)+ '.npy'
                 src = np.load(src_fname)
@@ -1366,8 +1382,10 @@ class Rom(object):
                 np.save(rsrc_fname,rsrc)
                 
                 # reduce BCs
-                sys.stdout.write(\
-                    '\r= ({:3d}|{:3d}) computing BC...'.format(m,m0))
+                sys.stdout.write('\r({:1d}) constructing BC   '.format(n)\
+                         + '        time-interval: {:4d}/{:4d}'.format(m,M0)\
+                                + ' [d {:3d}]'.format(m0))
+                sys.stdout.flush()
                 rbc = rbasis[0,:m0]
                 rbc /= np.linalg.norm(rbc)
                 rbc_fname = \
@@ -1376,8 +1394,10 @@ class Rom(object):
 
                 # reduce transition list
                 if (m > 0):
-                    sys.stdout.write(\
-                    '\r= ({:3d}|{:3d}) computing transition..'.format(m,m0))
+                    sys.stdout.write('\r({:1d}) constructing trans'.format(n)\
+                             + 'ition   time-interval: {:4d}/{:4d}'.format(m,M0)\
+                                    + ' [d {:3d}]'.format(m0))
+                    sys.stdout.flush()
                     T_fname =  \
                         '_output/transition_'+str(n)+'_'+str(m) + '.npy'
                     T = np.load(T_fname)
@@ -1428,8 +1448,7 @@ class Rom(object):
                 prefix = ''
             
             K = self._rom_tri.nsimplex
-            #M = min(M0,len(self._time_index_list))
-            M = len(self._time_index_list)
+            M0 = len(self._time_index_list)-1
 
             if simplex_list == None:
                 k_list = range(K)
@@ -1438,8 +1457,7 @@ class Rom(object):
 
             if time_interval_list == None:
                 # not to be confused with usual time_index_list
-                # TODO remove..
-                m_list = range(M-1)
+                m_list = range(M0)
             else:
                 m_list = time_interval_list
 
@@ -1454,8 +1472,6 @@ class Rom(object):
                 M_fname = '_output/' + prefix + \
                         'M_' + str(k) + '.npy'
                 M_list = np.load(M_fname)
-                M = len(M_list)+1
-                m_list = range(M-1)
                 transition_list = []
                 F_list = []
                 src_list = []
@@ -1468,10 +1484,10 @@ class Rom(object):
                             'F_' +str(k)+ '_' +str(m)+ '.npy'
                     src_fname = '_output/' + prefix + \
                             'src_' +str(k)+ '_' +str(m)+ '.npy'
-                    T_fname = '_output/' + prefix + \
-                            'transition_'+str(k)+'_'+str(m+1) + '.npy'
                     bc_fname = '_output/' + prefix + \
                             'bc_' +str(k)+ '_' +str(m)+ '.npy'
+                    T_fname = '_output/' + prefix + \
+                            'transition_'+str(k)+'_'+str(m+1) + '.npy'
     
                     F = np.load(F_fname)
                     src = np.load(src_fname)
@@ -1487,7 +1503,7 @@ class Rom(object):
                     bc_list.append(bc.copy())
                     
                     # transition list of length M-2 
-                    if (m < M-2):
+                    if (m < M0-1):
                         T = np.load(T_fname)
                         transition_list.append(T.copy())
                 
@@ -1506,7 +1522,7 @@ class Rom(object):
 
 
     
-    def run_rom(self,mu=[7.5, 0.035],M0=100,\
+    def run_rom(self,mu=[7.5, 0.035],M0=None,\
                      evaluate=False,verbose=False,reread=False,\
                      frugal=False):
         r"""
@@ -1514,7 +1530,7 @@ class Rom(object):
         
         :Input:
         - mu: 2D-array [mu1,mu2]
-        - M0: maximal number of time-steps
+        - M0: maximal number of time-intervals
         - evaluate: represent in HFM basis and store in self._rom_ra_list
         - frugal: set up and run rom for just one element
         
@@ -1564,32 +1580,32 @@ class Rom(object):
         u0a = np.zeros(x.shape)
         u0a[0:2] = mu0   # mu0
         r0 = np.dot(U.T,u0a)
-        r1 = r0
-        r1 = np.array(r1)       # redundant..?
+        r1 = np.array(r0).copy()       # redundant..?
         r_list = []
 
-        sc = 1
+        sc = 1                  # TODO: remove
         dt = self._hfm_dt
         dt1 = dt/sc
-        #M0 = min([time_index_list[M0],time_index_list[-1]])
-        M1 = min(M0,len(time_index_list)-2)
-        M0 = time_index_list[M1]
-        #print('run_rom: M0 =  ' + str(M0))
+        if M0 == None:
+            M0 = len(time_index_list) - 1
+            tfinal = time_index_list[M0]
+        else:
+            tfinal = time_index_list[M0]
 
         if evaluate:
             self._rom_ra_list = []
-            self._rom_ra_list.append(u0a)
+            self._rom_ra_list.append(np.dot(U,r1))
         
         i0_old = get_time_index(0, time_index_list)
 
-        #if verbose:
-        #    print('running ROM..')
-        for j in range(1,int(M0*sc)):
+        for j in range(1,tfinal):
             if verbose:
-                sys.stdout.write('\r= time-step : {:04d}'.format(j))
+                sys.stdout.write('\r' + ' '*79)
+                sys.stdout.write('\r({:1d}) running ROM,'.format(int(k))
+                            + ' time-interval : {:04d}.. '.format(i0_old))
                 sys.stdout.flush()
             i0 = get_time_index(j, time_index_list)
-            if i0_old < i0:
+            if (i0_old < i0):
                 i0_old = i0
                 r1 = np.dot(transition_list[i0-1],r1)
             
@@ -1603,12 +1619,7 @@ class Rom(object):
             
             if evaluate:
                 if verbose:
-                    if j%3 == 0:
-                        sys.stdout.write(' .. reconstruction ')
-                    elif j%3 == 1:
-                        sys.stdout.write('. . reconstruction ')
-                    else:
-                        sys.stdout.write('..  reconstruction ')
+                    sys.stdout.write('.. reconstruction ..')
                     sys.stdout.flush()
                 M_k = M_list[i0_old]
                 if self._rom_reduced:
@@ -1627,8 +1638,8 @@ class Rom(object):
         self._rom_r1 = r1
         self._rom_r_list = r_list
         self._rom_i0 = i0_old
-        if verbose:
-            print(' .. run complete.')
+        #if verbose:
+            #print(' .. run complete.')
 
 
     def plot_rom_solution(self):
