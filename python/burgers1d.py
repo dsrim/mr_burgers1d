@@ -999,7 +999,7 @@ class Rom(object):
 
 
     
-    def build_basis(self,tol=1e-14,Mfinal=80,max_basis_size=200,\
+    def build_basis(self,tol=1e-14,Tfinal=50,max_basis_size=200,\
                     t_interval=5,P=5,Pt=5,p=40,save_snapshot=False,\
                     verbose=False):
         r'''
@@ -1015,7 +1015,7 @@ class Rom(object):
         - t_interval: interval in the parameter-time element
         - max_basis_size: threshold the maximum number of basis
         - save_snapshot: store snapshot matrix (pre-SVD)
-        - Mfinal: final time-step
+        - Tfinal: final time-step
 
         '''
 
@@ -1043,7 +1043,7 @@ class Rom(object):
         z = get_uniform_samples(P)    # get uniformly-spaced samples
 
         # set up time-intervals for sampling
-        time_index_list = [1,2] + range(3,Mfinal,t_interval)
+        time_index_list = [1,2] + range(3,Tfinal,t_interval)
         self._time_index_list = time_index_list
         
         if verbose:

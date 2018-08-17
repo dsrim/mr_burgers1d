@@ -4,8 +4,8 @@ import numpy as np
 import matplotlib.pyplot as pl
 
 
-print('loading pickled rom...')
-with open('_output/rom_file.pkl',mode='r') as input_file:
+print('loading pickled ROM...')
+with open('_output/ROM_object.pkl',mode='r') as input_file:
     Rom0 = pkl.load(input_file)
 
 print('= done.')

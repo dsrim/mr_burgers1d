@@ -5,8 +5,8 @@ import matplotlib.pyplot as pl
 from copy import copy
 
 
-print('loading pickled rom...')
-with open('_output/rom_file.pkl',mode='r') as input_file:
+print('loading pickled ROM...')
+with open('_output/ROM_object.pkl',mode='r') as input_file:
     Rom0 = pkl.load(input_file)
 
 print('= done.')
@@ -54,7 +54,6 @@ if 0:
             e4t = []
             for k in range(L):
                 ra = ra_list[k]
-                #l2error = np.sqrt(dt)*np.linalg.norm(ra - u[:,k])
                 
                 max_error = np.max(np.abs(ra - u[:,k]))
                 e4t.append(max_error)
