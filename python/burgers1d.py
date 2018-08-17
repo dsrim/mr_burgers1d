@@ -1218,6 +1218,8 @@ class Rom(object):
 
         np.random.seed(12345)
 
+        M0 = len(self._time_index_list)-1
+
         # generate samples
         for n in range(self._rom_tri.nsimplex):
             j = 0
@@ -1233,7 +1235,7 @@ class Rom(object):
                 if n0 == n:
                     random_mu_list.append(mu0)
             
-                    self.run_rom(mu=mu0,frugal=True,M0=M0)
+                    self.run_rom(mu=mu0,frugal=True,M0=M0,evaluate=True)
                     rs_list.append(copy(self._rom_r_list))
                     sys.stdout.write('\rrunning ROM in triangle '\
                                 + '{:1d}, sample number {:5d}..'.format(n,j+1))
@@ -1276,6 +1278,7 @@ class Rom(object):
 
         :Inputs:
         - M0: maximum time-intervals
+        - max_time-step: maximum no. of time-steps allowed
         - max_nbasis: maximum no. of basis allowed
         - tol: tolerance for truncating singular values (%)
         - nsols: number of solutions to sample for each parameter-triangle 
@@ -1298,11 +1301,16 @@ class Rom(object):
             M = snapshot_list.shape[1]      # number of time intervals
             rM_list = []
             print('\n - computing basis for tri {:1d}...'.format(n))
-
-            for m in range(len(M_list)):
+            
+            M0 = len(M_list)-2
+            max_time_step = til[-1]
+            print('max_time_step = ' + str(max_time_step))
+            
+            for m in range(M0):
                 
                 m1 = M_list[m]
                 sampled_sols_list = []
+                # gather snapshots
                 for i in range(til[m]-1,til[m+1]-1):
                     if i < max_time_step-1:
                         new_array = np.array([snapshot_list[:,i][k].T \
@@ -1321,9 +1329,6 @@ class Rom(object):
                 m0 = \
                     next((i for i,si in enumerate(s/s[0]) if si < tol),\
                          max_nbasis)
-                #sys.stdout.write('\rm = {:3d} |'.format(m) \
-                #           + ' no. of reduced basis m0 = {:3d} '.format(m0)\
-                #           + '/ m1 = {:3d}'.format(m1))
                 rM_list.append(m0)  
                 W = W[:,:m0]
                 
@@ -1423,7 +1428,8 @@ class Rom(object):
                 prefix = ''
             
             K = self._rom_tri.nsimplex
-            M = min(M0,len(self._time_index_list))
+            #M = min(M0,len(self._time_index_list))
+            M = len(self._time_index_list)
 
             if simplex_list == None:
                 k_list = range(K)
@@ -1432,6 +1438,7 @@ class Rom(object):
 
             if time_interval_list == None:
                 # not to be confused with usual time_index_list
+                # TODO remove..
                 m_list = range(M-1)
             else:
                 m_list = time_interval_list
@@ -1447,6 +1454,8 @@ class Rom(object):
                 M_fname = '_output/' + prefix + \
                         'M_' + str(k) + '.npy'
                 M_list = np.load(M_fname)
+                M = len(M_list)+1
+                m_list = range(M-1)
                 transition_list = []
                 F_list = []
                 src_list = []
@@ -1522,7 +1531,7 @@ class Rom(object):
         L = len(time_index_list)
         
         if frugal:
-            self._set_up_rom(simplex_list=[k])
+            self._set_up_rom(simplex_list=[k],load_basis=evaluate)
             
             M_list = self._rom_M[0]
             F_list = self._rom_F[0]
@@ -1565,7 +1574,10 @@ class Rom(object):
         sc = 1
         dt = self._hfm_dt
         dt1 = dt/sc
-        M0 = min([time_index_list[M0],time_index_list[-1]])
+        #M0 = min([time_index_list[M0],time_index_list[-1]])
+        M1 = min(M0,len(time_index_list))
+        M0 = time_index_list[M1]
+        #print('run_rom: M0 =  ' + str(M0))
 
         if evaluate:
             self._rom_ra_list = []
@@ -1600,7 +1612,7 @@ class Rom(object):
                         sys.stdout.write('. . reconstruction ')
                     else:
                         sys.stdout.write('..  reconstruction ')
-                sys.stdout.flush()
+                    sys.stdout.flush()
                 M_k = M_list[i0_old]
                 if self._rom_reduced:
                     fname = '_output/rbasis_'+str(k)+'_'+str(i0_old)+'.npy'
@@ -1697,7 +1709,10 @@ class Rom(object):
     
     def save(self):
         r"""
-        save ROM 
+        save ROM. 
+
+        - class itself saved in _output/rom_file.pkl
+        - more data are stored in _output/ROM_info.txt
         
         """
         
@@ -1730,7 +1745,8 @@ class Rom(object):
 
     def load(self):
         r"""
-        load stored ROM 
+        load data from stored ROM. The class itself should be loaded by
+        unpickling e.g. _output/ROM_object.pkl
             
         """
         
@@ -1770,7 +1786,7 @@ class Rom(object):
             self._rom_tri = pickle.load(input_pkl)
 
 
-    def save_as_pickle(self,fname='_output/rom_file.pkl'):
+    def save_as_pickle(self,fname='_output/ROM_object.pkl'):
 
         import pickle
 
