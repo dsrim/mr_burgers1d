@@ -516,8 +516,8 @@ class Rom(object):
             n1 = len(w1_list)
 
             if verbose:
-                print('added no. of pieces: n0,n1 = {:2d},{:2d}'.format(n0,n1)\ 
-                  + '\n                     gl,gr = {:2d},{:2d}'.format(gl,gr))
+                print('added no of pieces: n0,n1 = {:2d},{:2d}'.format(n0,n1) \
+                  + '\n                    gl,gr = {:2d},{:2d}'.format(gl,gr))
 
             count += 1
             if count > 5:
