@@ -176,13 +176,14 @@ class Rom(object):
         """
 
 
-        self._hfm_m0_list = mu0_list    # incoming left BC
-        self._hfm_m1_list = mu1_list    # parameter for the source term
+        self._hfm_mu0_list = mu0_list    # incoming left BC
+        self._hfm_mu1_list = mu1_list    # parameter for the source term
 
         mu = np.zeros(2)    # parameter values
         k2mu   = []
         u_list = []
         
+        print('running HFM ...')
         k = 0   # run number
         for i in range(len(mu0_list)):
             for j in range(len(mu1_list)):
@@ -191,8 +192,9 @@ class Rom(object):
                 mu[1] = mu1_list[j]
                 k2mu.append((mu[0],mu[1]))
                 
-                print('= running HFM for parameter values: ' \
+                sys.stdout.write('\r= running HFM for parameter values: ' \
                     + 'mu0 = {:1.4f}, mu1 = {:1.4f} '.format(mu[0],mu[1]))
+                sys.stdout.flush()
 
                 # run HFM
                 uk = self.run_hfm(mu,N=N,xl=xl,xr=xr,dt=dt,M=M)
@@ -417,7 +419,7 @@ class Rom(object):
                 print(\
                 '= no. of pieces: (n0,n1)= ({:2d},{:2d})'.format(n0,n1))
             
-            if (n1 != n0):
+            if (verbose and (n1 != n0)):
                 print('*** WARNING: signature condition violated ***')
             
             if n1 < n0:
@@ -976,7 +978,7 @@ class Rom(object):
     
         for j in range(len(tm_list)):
     
-            tm = snapshot_indices[j]
+            tm = tm_list[j]
             
             u00 = np.array(u_list[side0[0]][:,tm]).flatten()
             u10 = np.array(u_list[side0[1]][:,tm]).flatten()
@@ -999,15 +1001,14 @@ class Rom(object):
 
         :Input:
 
-        tol: tolerance level for truncating singular values in percentage
-        p: no. of terms to keep in the Taylor series expansion of source term
-        nalphan
-        P: no. of unformly-spaced samples per element in parameter
-        Pt: no. of unformly-spaced samples per element in time
-        t_interval: interval in the parameter-time element
-        max_basis_size: threshold the maximum number of basis
-        save_snapshot: store snapshot matrix (pre-SVD)
-        Mfinal: final time-step
+        - tol: tolerance level for truncating singular values in percentage
+        - p: no. of terms to keep in the Taylor series expansion of source term
+        - P: no. of unformly-spaced samples per element in parameter
+        - Pt: no. of unformly-spaced samples per element in time
+        - t_interval: interval in the parameter-time element
+        - max_basis_size: threshold the maximum number of basis
+        - save_snapshot: store snapshot matrix (pre-SVD)
+        - Mfinal: final time-step
 
         '''
 
@@ -1023,8 +1024,8 @@ class Rom(object):
         precompute_src_rom = self._precompute_src_rom
 
         # set up Delaunay triangulation
-        mu0_list = self._hfm_m0_list
-        mu1_list = self._hfm_m1_list
+        mu0_list = self._hfm_mu0_list
+        mu1_list = self._hfm_mu1_list
         
         Mu1,Mu0 = np.meshgrid(mu1_list,mu0_list)
         train_pts = np.concatenate(([Mu0.flatten()],[Mu1.flatten()]),axis=0).T
@@ -1052,7 +1053,8 @@ class Rom(object):
 
         for n in range(tri.nsimplex):
             
-            print('building rom for element: ' + str(n))
+            sys.stdout.write('\nbuilding local basis for element: '+str(n)+'\n')
+            sys.stdout.flush()
             
             # get mu coordinates
             mu_list = []    # mu values for each sample points in z
@@ -1071,8 +1073,9 @@ class Rom(object):
             for j in range(len(time_index_list)-1):
                 
                 basis_j = []    # basis for time-slice
-                print('- building basis at time-step n = {:04d}'.format(\
-                         time_index_list[j]))
+                sys.stdout.write(\
+                  '\r= building basis at time-interval n = {:4d}'.format(j))
+                sys.stdout.flush()
                 
                 for mu in mu_list:
                     
@@ -1112,7 +1115,7 @@ class Rom(object):
                     basis_raw_list.append(basis_array_j)
 
             self._rom_basis.append(basis_list)
-            if save_raw:
+            if save_snapshot:
                 self._rom_basis_raw.append(basis_raw_list)
 
             # off-line computations for flux and source
@@ -1121,11 +1124,16 @@ class Rom(object):
             bc_list  = []
             
             K = len(basis_list)-1
+            maxM = 1
             for k,U in enumerate(basis_list):
                 
                 M_k = M_list[k]
-                print('precomputing flux and src for ' + str(k) + ' / ' \
-                         + str(K) + ' | number of basis: ' + str(M_k))
+                if M_k > maxM:
+                    maxM = M_k
+                sys.stdout.write('\r= precomputing flux,'\
+                         + 'src for time-interval {:4d}/{:4d}'.format(k,K)\
+                                + ' | max no of basis: {:4d}'.format(maxM))
+                sys.stdout.flush()
                 
                 # compute reduced basis 
                 F = precompute_flux_rom(U[:,:M_k])
@@ -1137,7 +1145,6 @@ class Rom(object):
 
                 # compute boundary conditions
                 bc_list.append( U[0,:M_k] )
-                print('= done')
 
             #TODO: following 4 lines necessary?
             self._rom_F.append(F_list)
@@ -1163,9 +1170,7 @@ class Rom(object):
 
             self._rom_T.append(transition_list)
 
-            ##
-            ##  save generated lists to output files    
-            ##
+            # save generated lists to output files    
             L = len(basis_list)
             for k in range(L):
                 m = L - 1 - k
@@ -1204,6 +1209,10 @@ class Rom(object):
         r"""
         
         further reduction of the model based on MC sampling
+
+        :Inputs:
+        nsols: number of solutions for each triangular element
+        M0:    final time-step
         
         """
 
@@ -1213,7 +1222,7 @@ class Rom(object):
         for n in range(self._rom_tri.nsimplex):
             j = 0
             random_mu_list = []
-            random_mu = self._random_mu
+            random_mu = self.random_mu
             rs_list = []
 
             while(len(random_mu_list) < nsols):
@@ -1224,11 +1233,11 @@ class Rom(object):
                 if n0 == n:
                     random_mu_list.append(mu0)
             
-                    print('running rom..')
                     self.run_rom(mu=mu0,frugal=True,M0=M0)
-                    print('= done')
                     rs_list.append(copy(self._rom_r_list))
-                    print('sample number: ' + str(j))
+                    sys.stdout.write('\rrunning ROM in triangle '\
+                                + '{:1d}, sample number {:5d}..'.format(n,j+1))
+                    sys.stdout.flush()
                     j += 1
             
             mu_fname = '_output/sampled_mu_' + str(n) + '.npy'
@@ -1236,6 +1245,13 @@ class Rom(object):
             np.save(mu_fname,random_mu_list)
             np.save(sols_fname,rs_list)
             self._rom_set_up = False
+
+
+    def print_prog(text):
+
+        sys.stdout.write('\r')
+        sys.stdout.write(text)
+        sys.stdout.flush()
 
     
     def _dot3d(self,A,B,C,D):
@@ -1252,19 +1268,21 @@ class Rom(object):
         return E
 
     
-    def reduce_bases(self,tol=1e-6,max_nbasis=150,max_time_step=2000):
+    def reduce_bases(self,tol=1e-6,\
+                     max_nbasis=150,M0=400,nsols=1000):
         r"""
         compute POD reduced basis for each local element using sampled basis
         functions
 
         :Inputs:
-        - max_time_step: maximum allowed time-step
+        - M0: maximum time-intervals
         - max_nbasis: maximum no. of basis allowed
         - tol: tolerance for truncating singular values (%)
+        - nsols: number of solutions to sample for each parameter-triangle 
         
         """
 
-        self._mc_sample()
+        self._mc_sample(nsols=nsols,M0=M0)
         N = self._rom_tri.nsimplex
         til = self._time_index_list.tolist()
         M = len(til)
@@ -1274,13 +1292,14 @@ class Rom(object):
             mu_fname = '_output/sampled_mu_'+str(n)+'.npy'
             sols_fname = '_output/sampled_rom_sols_'+str(n)+'.npy'
 
-            M_fname = '_output/M_' + str(n) + '.npy'
+            M_fname = '_output/M_'+str(n)+'.npy'
             M_list = np.load(M_fname)
             snapshot_list = np.load(sols_fname)
             M = snapshot_list.shape[1]      # number of time intervals
             rM_list = []
+            print('\n - computing basis for tri {:1d}...'.format(n))
 
-            for m in range(len(M_list)-1):
+            for m in range(len(M_list)):
                 
                 m1 = M_list[m]
                 sampled_sols_list = []
@@ -1293,7 +1312,6 @@ class Rom(object):
                 if len(sampled_sols_list) == 0:
                     break
                 sampled_sols = np.concatenate(sampled_sols_list,axis=1)
-                print(sampled_sols.shape)
                 
                 M0 = sampled_sols.shape[1]      # number of "generated" bases
                 W,s,V = np.linalg.svd(sampled_sols,full_matrices=0)
@@ -1303,13 +1321,13 @@ class Rom(object):
                 m0 = \
                     next((i for i,si in enumerate(s/s[0]) if si < tol),\
                          max_nbasis)
-                print('m = ' +str(m)+ ' | no. of reduced basis m0 = ' \
-                    + str(m0) + ' / m1 = ' + str(m1))
+                #sys.stdout.write('\rm = {:3d} |'.format(m) \
+                #           + ' no. of reduced basis m0 = {:3d} '.format(m0)\
+                #           + '/ m1 = {:3d}'.format(m1))
                 rM_list.append(m0)  
                 W = W[:,:m0]
                 
                 # compute basis
-                print('- computing basis...')
                 basis_fname = \
                         '_output/basis_' +str(n)+ '_' +str(m)+ '.npy'
                 basis = np.load(basis_fname)
@@ -1319,18 +1337,20 @@ class Rom(object):
                 np.save(rbasis_fname,rbasis)
 
                 # reduce flux
-                print('- computing flux...')
+                sys.stdout.write(\
+                    '\r= ({:3d}|{:3d}) computing flux...'.format(m,m0))
                 F_fname = \
                         '_output/F_' +str(n)+ '_' +str(m)+ '.npy'
                 F = np.load(F_fname)
-                rF = self._dot3d(F,W,W,W)   # faster than einsum
+                rF = self._dot3d(F,W,W,W)   # faster than einsum...
                 
                 rF_fname = \
                         '_output/rF_' +str(n)+ '_' +str(m)+ '.npy'
                 np.save(rF_fname,rF)
                 
                 # reduce source
-                print('- computing source...')
+                sys.stdout.write(\
+                    '\r= ({:3d}|{:3d}) computing source...'.format(m,m0))
                 src_fname = \
                         '_output/src_' +str(n)+ '_' +str(m)+ '.npy'
                 src = np.load(src_fname)
@@ -1341,7 +1361,8 @@ class Rom(object):
                 np.save(rsrc_fname,rsrc)
                 
                 # reduce BCs
-                print('- computing reduced BC...')
+                sys.stdout.write(\
+                    '\r= ({:3d}|{:3d}) computing BC...'.format(m,m0))
                 rbc = rbasis[0,:m0]
                 rbc /= np.linalg.norm(rbc)
                 rbc_fname = \
@@ -1350,7 +1371,8 @@ class Rom(object):
 
                 # reduce transition list
                 if (m > 0):
-                    print('- computing transition matrix...')
+                    sys.stdout.write(\
+                    '\r= ({:3d}|{:3d}) computing transition..'.format(m,m0))
                     T_fname =  \
                         '_output/transition_'+str(n)+'_'+str(m) + '.npy'
                     T = np.load(T_fname)
@@ -1360,7 +1382,7 @@ class Rom(object):
                         '_output/rtransition_'+str(n)+'_'+str(m) + '.npy'
                     np.save(rT_fname,rT)
                 W_old = W                    
-                print('= done.')
+                sys.stdout.flush()
         
             rM_fname = \
                        '_output/rM_' + str(n) + '.npy'
@@ -1376,7 +1398,8 @@ class Rom(object):
 
 
     def _set_up_rom(self,reset=False,load_basis=False,\
-                         simplex_list=None, time_interval_list=None, M0=4000):
+                         simplex_list=None, time_interval_list=None, \
+                         M0=100,verbose=False):
         r"""
         
         Load bases precomputed flux, src, transition_list into memory
@@ -1400,7 +1423,7 @@ class Rom(object):
                 prefix = ''
             
             K = self._rom_tri.nsimplex
-            M = len(self._time_index_list) 
+            M = min(M0,len(self._time_index_list))
 
             if simplex_list == None:
                 k_list = range(K)
@@ -1454,7 +1477,7 @@ class Rom(object):
                     src_list.append(src.copy())
                     bc_list.append(bc.copy())
                     
-                    # transition list of length L-2 
+                    # transition list of length M-2 
                     if (m < M-2):
                         T = np.load(T_fname)
                         transition_list.append(T.copy())
@@ -1468,24 +1491,24 @@ class Rom(object):
                 
                 self._rom_set_up = True
         else:
-            print('ROM already set up')
+            if verbose:
+                print('ROM already set up')
             pass
 
 
     
-    def run_rom(self,mu=[7.5, 0.035],M0=4000,\
+    def run_rom(self,mu=[7.5, 0.035],M0=100,\
                      evaluate=False,verbose=False,reread=False,\
                      frugal=False):
         r"""
         run reduced order model
         
         :Input:
-          - mu: 2D-array [mu1,mu2]
-          - M0: maximal number of time-steps
-          - evaluate: represent in HFM basis and store in self._rom_ra_list
-          - frugal: set up and run rom for just one element
-          
-
+        - mu: 2D-array [mu1,mu2]
+        - M0: maximal number of time-steps
+        - evaluate: represent in HFM basis and store in self._rom_ra_list
+        - frugal: set up and run rom for just one element
+        
         """
         
         show_plots = False
@@ -1542,7 +1565,7 @@ class Rom(object):
         sc = 1
         dt = self._hfm_dt
         dt1 = dt/sc
-        M0 = min([M0,time_index_list[-1]])
+        M0 = min([time_index_list[M0],time_index_list[-1]])
 
         if evaluate:
             self._rom_ra_list = []
@@ -1550,11 +1573,14 @@ class Rom(object):
         
         i0_old = get_time_index(0, time_index_list)
 
+        if verbose:
+            print('running ROM..')
         for j in range(1,int(M0*sc)):
+            if verbose:
+                sys.stdout.write('\r= time-step : {:04d}'.format(j))
+                sys.stdout.flush()
             i0 = get_time_index(j, time_index_list)
             if i0_old < i0:
-                if verbose:
-                    print((j,i0_old,i0))
                 i0_old = i0
                 r1 = np.dot(transition_list[i0-1],r1)
             
@@ -1567,6 +1593,14 @@ class Rom(object):
             r_list.append(r1.copy())
             
             if evaluate:
+                if verbose:
+                    if j%3 == 0:
+                        sys.stdout.write(' .. reconstruction ')
+                    elif j%3 == 1:
+                        sys.stdout.write('. . reconstruction ')
+                    else:
+                        sys.stdout.write('..  reconstruction ')
+                sys.stdout.flush()
                 M_k = M_list[i0_old]
                 if self._rom_reduced:
                     fname = '_output/rbasis_'+str(k)+'_'+str(i0_old)+'.npy'
@@ -1576,10 +1610,16 @@ class Rom(object):
                 ua = np.dot(Usmall,r1)
                 self._rom_ra_list.append(ua)
                 self._rom_ra = ua
+                if verbose:
+                    sys.stdout.write('.. done')
+                    sys.stdout.flush()
+            sys.stdout.flush()
         
         self._rom_r1 = r1
         self._rom_r_list = r_list
         self._rom_i0 = i0_old
+        if verbose:
+            print(' .. run complete.')
 
 
     def plot_rom_solution(self):
