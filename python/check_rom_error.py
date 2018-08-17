@@ -10,17 +10,6 @@ with open('_output/rom_file.pkl',mode='r') as input_file:
 
 print('= done.')
 
-#if 1:
-#    Rom0.build_rom(tol=1e-10,max_basis_size=200,Mfinal=100,t_interval=20,\
-#                   nalpha=4,P=4)
-#    Rom0.save()
-#
-#    mu0 = [7.2,0.04]
-#    Rom0.run_rom(mu=mu0,evaluate=True,M0=50)
-#    #Rom0.plot_triangulation()
-#    Rom0.plot_rom_solution()
-#    Rom0.compare_rom_solution(mu0,interval=5)
-
 
 def random_mu():
     mu = np.random.rand(2)

@@ -1,31 +1,36 @@
-import sys
-sys.path.insert(0, '../../mr/python')
-import mr
+# See LICENSE
+# Donsub Rim, Columbia U. (dr2965@columbia.edu) 2018-08-16
+#   * cleaned up to make repository public
+
+import os,sys
 import numpy as np
 import matplotlib.pyplot as pl
 from scipy.spatial import Delaunay
 from scipy.interpolate import InterpolatedUnivariateSpline
 from copy import copy
 
+# import displacement interpolation routines
+dinterp_path = '../../dinterp/dinterp'
+sys.path.insert(0,dinterp_path)
+import dinterp
+
 
 class Rom(object):
-    r"""Basic object representing reduced-order models
+    r"""
+        Basic class representing reduced-order models
 
     """
 
 
     def __init__(self):
-        r"""
-        ROM initialization routine.
-        """
 
         self._N = None              # HFM dof 
         self._x = None              # HFM domain 
         self._h = None              # HFM mesh-width for HFM
-        self._mu_current = None     # current set of parameters
+        self._hfm_mu = None         # current set of parameters
         self._hfm_M = None          # HFM number of time-steps
         self._hfm_dt = None         # HFM time-step size 
-        self._hfm_S = None          # HFM stiffness
+        self._hfm_D = None          # HFM stiffness
         self._hfm_src = None        # HFM source-term 
         self._hfm_k2mu_list = None  # list of HFM parameters (mu)
         self._hfm_u_list = None     # list of HFM solutions
@@ -44,58 +49,60 @@ class Rom(object):
         self._rom_src = []          # ROM source functions
         self._rom_M = []            # ROM basis numbers
         self._rom_T = []            # ROM transition matrices
-        self._time_index_list = [] # ROM grid-points in time
+        self._time_index_list = []  # ROM grid-points in time
 
         self._rom_reduced = False   # ROM basis reduction flag
-        self._rom_set_up = False   # ROM basis reduction flag
+        self._rom_set_up = False    # ROM basis reduction flag
 
         self._dpi = 200             # dpi for savefigs
 
     @property
-    def hfm_S(self):
-        r"""stiffness matrix"""
-        if self._hfm_S is None:
-            self._compute_stiffness()
-        return self._hfm_S
+    def hfm_D(self):
+        r"""differentation matrix"""
+        if self._hfm_D is None:
+            self._compute_diff()
+        return self._hfm_D
 
     @property
     def hfm_src(self):
-        r"""stiffness matrix"""
+        r"""source term"""
         self._compute_hfm_src()
         return self._hfm_src
 
     def _compute_hfm_src(self):
-        
-        mu1 = self._current_mu[1]
+        r"""compute exponential source term"""
+        mu1 = self._hfm_mu[1]
         x = self._x
-
         self._hfm_src = 0.02*np.exp(mu1*x)
 
-    def _compute_stiffness(self):
+
+    def _compute_diff(self):
         r"""
-        Assemble stiffness matrix
+
+        assemble differentiation matrix
 
         """
         N = self._N
         h = self._h
         
-        S = np.zeros((N,N))
-        S += (np.diag([.5]*N,k=0) - np.diag([.5]*(N-1),k=-1)) / h
-        S[ 0, 0] = -.5 /h
-        S[ 0, 1] =  .5 /h
-        S[-1,-2] = -.5 /h
-        S[-1,-1] =  .5 /h
+        D = np.zeros((N,N))
+        D += (np.diag([.5]*N,k=0) - np.diag([.5]*(N-1),k=-1)) / h
+        D[ 0, 0] = -.5 /h
+        D[ 0, 1] =  .5 /h
+        D[-1,-2] = -.5 /h
+        D[-1,-1] =  .5 /h
 
-        self._hfm_S = S
+        self._hfm_D = D
 
         
     def _hfm_time_step(self,u):
         r"""
-         Take one time-step of the high-fidelity model
+        
+         Take one time-step of the high-fidelity model(HFM)
         
         """
         
-        S = self.hfm_S
+        S = self.hfm_D
         src = self.hfm_src
         dt = self._hfm_dt
         
@@ -109,96 +116,89 @@ class Rom(object):
         r"""
         Run High Fidelity Model (HFM)
 
-        INPUTS
+        :Inputs:
             mu: (2,)-array designating parameters
 
+        :Outputs:
+            u: (N,)-array representing finite volume solution
+        
         """
 
-        set_domain = False
-        
         # set up domain
-        if self._N == None:
-            self._N = N
-            set_domain = True
-        #elif self._N != N:
-        #    print('resetting N')
-        #    self._N = N
-        #    set_domain = True
-
-        if set_domain:
-            x = np.linspace(xl,xr,N)
-            h = (xr - xl)/N
-            
-            self._x = x
-            self._h = h
-            self._hfm_dt = dt
-            self._hfm_M  = M
-        else:
-            N = self._N
-            x = self._x
-            h = self._h
-            dt = self._hfm_dt 
-            M = self._hfm_M  
+        self._N = N
+        x = np.linspace(xl,xr,N)
+        h = (xr - xl)/N
         
-        self._current_mu = mu
+        self._x = x
+        self._h = h
+        self._hfm_dt = dt
+        self._hfm_M  = M
+        self._hfm_mu = mu
         
-    
-        # solve one high-dimensional problem for given parameter mu
-        u = np.zeros((N,M+1))    # initialize zero array for solution u
-
+        # solve high-dimensional problem for given mu
+        u = np.zeros((N,M+1))    
         
         for j in range(M):
-            u[0:2] = 1.*mu[0]    # set incoming BC
+            u[0:2] = float(mu[0])    # set incoming BC
             u[:,j+1] = self._hfm_time_step(u[:,j])
         
-            if 0:
-                # plot CDFs of u
-                v = np.cumsum(u) 
-                pl.plot(x,v,'b')
-
         return u
 
+
         
-    def sample_hfm(self,N=250,dt=0.0125,M=4000,xl=0.,xr=100.):
+    def sample_hfm(self,N=250,dt=0.0125,M=4000,xl=0.,xr=100., \
+                   mu0_list = [3.  , 6.  , 9.   ],\
+                   mu1_list = [0.02, 0.05, 0.075]):
         r"""
-        run high fidelity model (HFM) in bulk
+
+        Run high fidelity model (HFM) for given two parameter values for
+        the Burgers' equation. The solution and the given parameter values are 
+        stored in ``self._hfm_k2mu_list = k2mu`` and  ``self._hfm_u_list``.
+        Also saves to a file 
+
+        then save solution to file
+
+        :HFM:
+        - Finite volume method on uniform grid
+        - 1st order Godunov flux with no entropy fix 
+        
+        :Input:
+        - N: number of grid-points
+        - M: total number of time-steps to take 
+        - dt: time-step size
+        - xl: left boundary
+        - xr: right boundary
+        - mu0_list: points to evaluate for first parameter mu0 designating 
+          left incoming boundary
+        - mu0_list: points to evaluate for second parameter mu1 designating
+          the strength of the source term
         
         """
 
-        # Run HDM for give parameter values 
 
-        # parameter values
-        mu = np.zeros(2)
-        
-        mu0_list = [3.  , 6.  , 9.   ]    # incoming left BC
-        mu1_list = [0.02, 0.05, 0.075]    # parameter for the source term
+        self._hfm_m0_list = mu0_list    # incoming left BC
+        self._hfm_m1_list = mu1_list    # parameter for the source term
 
-        self._hfm_m0_list = mu0_list
-        self._hfm_m1_list = mu1_list
-
-        # evaluation points (KC)
-        # mu0_list = [4.5  ]
-        # mu1_list = [0.038]
-
+        mu = np.zeros(2)    # parameter values
         k2mu   = []
         u_list = []
-        k = 0
-        mu = [0.,0.]
         
+        k = 0   # run number
         for i in range(len(mu0_list)):
             for j in range(len(mu1_list)):
                 
                 mu[0] = mu0_list[i]
                 mu[1] = mu1_list[j]
-                
                 k2mu.append((mu[0],mu[1]))
-                print '= '\
-                    + '  mu0 = ' + str(mu[0]) \
-                    + ', mu1 = ' + str(mu[1])
-                uk = self.run_hfm(mu,\
-                                 N=N,xl=xl,xr=xr,dt=dt,M=M)
+                
+                print('= running HFM for parameter values: ' \
+                    + 'mu0 = {:1.4f}, mu1 = {:1.4f} '.format(mu[0],mu[1]))
+
+                # run HFM
+                uk = self.run_hfm(mu,N=N,xl=xl,xr=xr,dt=dt,M=M)
                 u_list.append(uk)
-                fname = '_output/hfm_sol_' + str(k) + '.npy'
+
+                fname = os.path.join('_output','hfm_sol_{:02d}.npy'.format(k))
                 np.save(fname,uk)
                 k += 1
         
@@ -207,17 +207,17 @@ class Rom(object):
         
         
     def _diffp(self,a):
-        r"""
-            differentiate with padding: (output vector length unchanged)
-              
+        """
+        differentiate with padding: (output vector length unchanged)
+        
         """
         return np.diff(np.concatenate((a[:1],a)))
 
 
     def _supports(self,a):
-        r"""
-            return begin/ending indices of connected supports of a vector a
-
+        """
+        return begin/ending indices of connected supports of the input vector 
+        
         """
         b = 1.*(a > 0.)
         dpb = np.diff(np.concatenate(([0.],b),axis=0))
@@ -230,9 +230,9 @@ class Rom(object):
 
 
     def _get_parts(self,v):
-        r"""
-            return positive / negative parts of a vector
-
+        """
+        return positive / negative parts of a vector
+        
         """
         vp = v*(v >= 0.)
         vm = v*(v <  0.)
@@ -240,9 +240,9 @@ class Rom(object):
 
     
     def _get_spos(self,v):
-        r"""
-            return mean position of the supports  
-
+        """
+        return mean position of the supports  
+        
         """
         
         supp = np.abs(v) > 0.
@@ -250,13 +250,13 @@ class Rom(object):
 
     def _get_pieces(self,v):
         r"""
-            obtain pieces (supports) of a vector where the other pieces
-            have been zero'ed out
+        obtain pieces (connected supports) of a vector where the other pieces
+        have been zero'ed out by multiplying a characteristic function
 
         """
         ibegin,iend = self._supports(v)
         pieces_list = []
-        w = None
+        
         for k in range(len(ibegin)):
             ii = np.zeros(v.shape,dtype=bool)
             ii[ibegin[k]:iend[k]] = True
@@ -275,7 +275,7 @@ class Rom(object):
 
     def _del_gc(self,v,n=(2,2)):
         r"""
-            remove ghost cells
+        remove ghost cells
 
         """
         if (n[0] > 0) and (n[1] > 0):
@@ -288,7 +288,7 @@ class Rom(object):
 
     def plot_all_parts(self,v0,v1):
         r"""
-            plot all positive / negative parts
+        plot all positive / negative parts
 
         """
         diffp = self._diffp
@@ -313,9 +313,16 @@ class Rom(object):
         return fig, axes
 
 
-    def _plot0(self):
+    def _plot_2times(self,j0=3,j1=200,k=2):
+        r"""
+        plot some positive and negative parts for illustration
 
-        # plot some positive and negative parts for illustration
+        :Inputs:
+    
+        - k: snapshot number
+        - j0,j1: time-steps to compare
+
+        """
         j0 = 3
         j1 = 200
         k  = 2
@@ -340,16 +347,34 @@ class Rom(object):
 
 
     def _dinterp_parts(self,v0,v1,alpha,tol=1e-12,verbose=False):
-        # TODO: name dinterp_pieces makes more sense?
+        r"""
+
+        displacement interpolation by parts
+
+        1. Take two 1D-arrays and for each: differentiate and obtain *pieces*
+           (fctn times char. fctn of non-zero connected supports)
+        2. Match pieces that are closer together in the domain
+        3. Apply displacement interpolation between the corresponding pieces
+
+        :Input:
+        - v0,v1: two 1D arrays to interpolate
+        - alpha: interpolation parameter (between 0 and 1)
+        - tol: tolerance for assessing if two vectors are identical
+        - verbose: display messages (for debugging)
+
+        :Output:
+        - a list containing individually interpolated pieces
+
+        """
         
-        # preamble
+        # initialize some variables
         restrict = False
         add_gc = self._add_gc
         del_gc = self._del_gc
         get_pieces = self._get_pieces
         get_spos = self._get_spos
         
-        # extrapolate right BC
+        ## extrapolate right BC
 
         # get given values
         y0 = v0[-4:]
@@ -384,19 +409,20 @@ class Rom(object):
         gr = 0
         
         while (n0 != n1):
-            
-            # if the number of pieces are different
+            # IF the number of pieces are different
             # match the odd one out with the support in the ghost cells
-            
-
+            # (should not happen if signature condition is satisfied)
             
             if verbose:
-                print('number of pieces: (n0,n1)= ' + str(n0) + ',' + str(n1))
+                print(\
+                '= no. of pieces: (n0,n1)= ({:2d},{:2d})'.format(n0,n1))
             
+            if (n1 != n0):
+                print('*** WARNING: signature condition violated ***')
             
             if n1 < n0:
                 if verbose:
-                    print('swapping v0 and v1..')
+                    print('= swapping v0 and v1..')
                 
                 n2 = n0
                 n0 = n1
@@ -412,7 +438,8 @@ class Rom(object):
                 
                 alpha = 1. - alpha
                 if verbose:
-                    print(r' -> new # pieces: (n0,n1)= ' + str(n0) + ',' + str(n1))
+                    print(\
+                   '= new no. of pieces: (n0,n1)= ({:2d},{:2d})'.format(n0,n1))
             
             # get medians of the supports
             spos0 = np.zeros(n0)
@@ -430,7 +457,7 @@ class Rom(object):
                 for j1 in range(n1):
                     dist_mat[j0,j1] = np.abs(spos0[j0] - spos1[j1])
                     
-            # match closer supports
+            # match supports that are closer
             adj_mat  = np.zeros((n0,n1),dtype='bool')
             for j0 in range(n0):
                 i = int(np.argmin(dist_mat[j0,:]))
@@ -459,7 +486,7 @@ class Rom(object):
             else:
                 # edge case when one vector is null
                 if verbose:
-                    print('WARNING: one vector is null!')
+                    print('*** WARNING: one vector is null ! ***')
                 spos_ii = spos[0]
             
             if verbose:
@@ -489,12 +516,12 @@ class Rom(object):
             n1 = len(w1_list)
 
             if verbose:
-                print(r' -> added # pieces:  n0,n1 = ' + str(n0) +','+ str(n1))
-                print(r'                     gl,gr = ' + str(gl) +','+ str(gr))
+                print('added no. of pieces: n0,n1 = {:2d},{:2d}'.format(n0,n1)\ 
+                  + '\n                     gl,gr = {:2d},{:2d}'.format(gl,gr))
 
             count += 1
             if count > 5:
-                print('WARNING: missing-piece unresolved')
+                print('*** WARNING: missing-piece unresolved ***')
                 break
     
         g_list = []
@@ -506,17 +533,20 @@ class Rom(object):
             w1 = w1_list[j]
                 
             if np.linalg.norm(w0 - w1) < tol:
-                # if the two vectors are same, do nothing.
+                # if the two vectors are same: do nothing.
                 h = w0
                 
             else:
-                x = np.linspace(0.,1.,len(w0))
+                x = np.linspace(0.,1.,len(w0))  # dummy domain
                 
+                # compute mass
                 s0 = np.sum(w0)
                 s1 = np.sum(w1)
                     
-                x1,x2,Fv,Fv2 = mr.computeFz(x,w0/s0,w1/s1);    # need not be computed every time
-                xx,g = mr.dinterp(x,x1,x2,Fv,alpha);
+                # perform displacement interpolation
+                # DR: need not be computed every time... can be stored
+                x1,x2,Fv = dinterp.computeCDF(x,w0/s0,w1/s1);    
+                xx,g = dinterp.dinterp(x,x1,x2,Fv,alpha);
                     
                 s = (1. - alpha)*s0 + alpha*s1
                 if np.sum(g) > 0.:
@@ -537,17 +567,18 @@ class Rom(object):
                 axes[2].plot(h)
                 axes[2].set_title(str(s))
                 f.tight_layout()
-    #                 print(str(s))
             
-    
             g_list.append(h)
-    
     
         return g_list
 
+    
     def _plot1(self):
+        """
+        TODO
         
-                
+        """
+        
         # plot each piece
         fig,axes = pl.subplots(nrows=2,ncols=1,figsize=(8,4))
         supports_list = []
@@ -576,67 +607,92 @@ class Rom(object):
 
 
     def _dinterp_all(self,v0p,v1p,v0m,v1m,alpha):
+        r"""
+        deprecated? (TODO)
+
+        """
 
         dinterp_parts = self._dinterp_parts
         
         gp_list = dinterp_parts( v0p, v1p,alpha)
         gm_list = dinterp_parts(-v0m,-v1m,alpha)
-    #     g = np.zeros(N)
-    #     for gp in gp_list:
-    #         g += gp
+        
         for k,gm in enumerate(gm_list):
             gm_list[k] *= -1.
+        
         return gp_list + gm_list
 
 
     def _get_cell(self,t,ts):
+        r"""
+        return array-index with the largest entry
+        
+        """
         N = len(ts)
         for j in range(N):
             if t < ts[j]:
                 return j-1
         return 0
 
-    def _get_W(self,v0,v1,\
-               alphas,offsets=(0.,0.),return_parts=False,return_svd=True):
+    
+    def _get_W(self,v0,v1,alphas,offsets=(0.,0.),\
+               return_pieces=False,return_svd=True,plot_parts=False):
+        r"""
+        construct local basis using displacement interpolation and then 
+        performing SVD on the snapshot matrix
+ 
+        :Inputs:
+        - v0,v1: two 1D arrays
+        - alphas: list of doubles bw 0 & 1, disp. interpolation parameters
+        - offsets: offsets to use for disp. interpolation
+        - return_pieces: return *pieces* of the displacement interpolation
+        - return_svd: return the SVD of the interpolated results
+        - plot_parts: plot individual parts (for debugging)
+
+        """
     
         dinterp_alphas = self._dinterp_alphas
         get_parts = self._get_parts
         get_pieces = self._get_pieces
         diffp = self._diffp
         
+        # perform displacement interpolation by parts
         us = dinterp_alphas(v0,v1,alphas,offsets=offsets)
         
-        if return_parts:
-            us_pieces = []
-            #us_pieces += us    # add generated basis themselves
+        if return_pieces:
+            # return individual parts by post-processing us
+            us_pieces = []      # list to contain interpolated pieces
             for k,u in enumerate(us):
-                dup,dum = get_parts(diffp(u))
-                dup_list = get_pieces(dup)
-                dum_list = get_pieces(-dum)
+                dup,dum = get_parts(diffp(u))   # obtain parts
+                dup_list = get_pieces(dup)      # positive pieces
+                dum_list = get_pieces(-dum)     # negative pieces
+                
                 for dup in dup_list:
                     supp = 1.*(np.abs(dup) > 0.)
                     us_pieces.append(np.cumsum(dup)*supp)
-                    if 0:
+                    if plot_parts:
                         pl.plot(np.cumsum(dup)*supp)
-                        pl.savefig('dup_' + str(k))
+                        pl.savefig('_plots/dup_' + str(k))
                         pl.close()
+                
                 for dum in dum_list:
                     supp = 1.*(np.abs(dum) > 0.)
                     us_pieces.append(-np.cumsum(dum)*supp)
-                    if 0:
+                    if plot_parts:
                         pl.plot(np.cumsum(dum)*supp)
-                        pl.savefig('dum_' + str(k))
+                        pl.savefig('_plots/dum_' + str(k))
                         pl.close()
+            
             us_pieces.append(np.ones(us[-1].shape))
             us = np.array(us_pieces).T     
             
         else:
             dim = us[-1].shape
-            us.append(np.ones(dims))
-            for k in range(1,8):
+            us.append(np.ones(dims))    # add constant fctns
+            for k in range(1,5):
                 ubc0 = np.zeros(dims)
                 ubc0[:k] = 1.
-                us.append(ubc0.copy())
+                us.append(ubc0.copy())  # add fctns for left-BCs
             us = np.array(us).T
             
         if return_svd:
@@ -647,7 +703,19 @@ class Rom(object):
 
 
     def _dinterp_alphas(self,v0,v1,alphas,\
-                       offsets=(0.,0.),return_parts=False,return_int=True):
+                       offsets=(0.,0.),return_pieces=False,return_int=True):
+        r"""
+
+        Perform disp. interpolation by parts in bulk for a given list of
+        interpolation parameters alphas
+
+        :Inputs:
+        - v0,v1: two 1D arrays to use for disp. interpolation
+        - alphas: list of doubles bw 0 & 1, disp. interpolation parameters
+        - offsets: add a weighted constant before cumulative sum
+        - return_pieces: return individual pieces of the interpolation
+
+        """
 
         get_parts = self._get_parts
         dinterp_all = self._dinterp_all
@@ -660,37 +728,28 @@ class Rom(object):
             g_list = dinterp_all(v0p,v1p,v0m,v1m,alpha)    # can be made faster
             offset = (1-alpha)*offsets[0] + alpha*offsets[1]
             h = np.zeros(v0.shape)
-            if not return_parts:
-                for g0 in g_list:
-                    if return_int:
-                        h += np.cumsum(g0)
-                    else:
-                        h += g0
-                us.append(h)
-            else:
+            if return_pieces:
                 for g0 in g_list:
                     if return_int:
                         us.append(np.cumsum(g0))
                     else:
                         us.append(g0)
+            else:
+                for g0 in g_list:
+                    if return_int:
+                        h += np.cumsum(g0)
+                    else:
+                        h += g0
+                    h[:2] += offset
+                us.append(h)
         return us
 
 
-#    def _precompute_flux_rom(self,U):
-#        # pre-compute flux
-#        N = U.shape[0]
-#        m = U.shape[1]
-#        F = np.zeros((m,m,m))
-#        for i in range(m):
-#            for j in range(m):
-#                for l in range(m):
-#                    F[i,j,l] -= .5\
-#                             *np.sum(U[1:,i]*U[1:,j]*U[1:,l] - U[1:,i]*U[:(N-1),j]*U[:(N-1),l])
-#                    F[i,j,l] -= .5\
-#                             *np.sum(U[0,i]*U[1,j]*U[1,l] - U[0,i]*U[0,j]*U[0,l])
-#        return F
-
     def _precompute_flux_rom(self,U):
+        r"""
+        Using local basis, precompute flux difference 
+        
+        """
         # pre-compute flux
         N = U.shape[0]
         m = U.shape[1]
@@ -702,7 +761,11 @@ class Rom(object):
 
 
     def _precompute_src_rom(self,U,p=20):
+        r"""
+        Using local basis, precompute sources
         
+        """
+
         s0 = 0.02    
         N = U.shape[0]      # HFM dof
         m = U.shape[1]      # ROM dof
@@ -721,6 +784,10 @@ class Rom(object):
 
 
     def _rom_time_step(self,r,F,src,dt,mu1,bc):
+        r"""
+        update time-step in Galerkin-ROM
+
+        """
         
         h = self._h
         p = src.shape[1]
@@ -729,13 +796,16 @@ class Rom(object):
         dr = dt/h*np.dot(np.dot(F,r),r) + dt*np.dot(src,mu1_array)
         bc = bc / np.linalg.norm(bc)
         dr = dr - np.dot(dr,bc)*bc
-        #r = r + dt/h*np.dot(np.dot(F,r),r) + dt*np.dot(src,mu1_array)
         r = r + dr
         
         return r
 
 
     def plot_triangulation(self):
+        r"""
+        Plot Delaunay triangulation in the parameter space
+
+        """
 
         tri = self._rom_tri
         dpi = self._dpi
@@ -756,10 +826,23 @@ class Rom(object):
         ax0.set_xlabel('$\mu_1$')
         ax0.set_ylabel('$\mu_2$')
 
-        f.savefig('triangulation.png',dpi=dpi)
+        f.savefig('_plots/triangulation.png',dpi=dpi)
         pl.close(f)
 
+
+
     def _get_barycentric(self,tri,x):
+        r"""
+        Obtain Barycentric coordinates in tri for the given point
+
+        :Input:
+        tri: Deluanay triangulation (scipy)
+        x: (2,)-array of doubles
+        
+        :Output:
+        v: (2,)-array of doubles containing Barycentric coordinates
+
+        """
         
         ndim = tri.ndim
         n = int(tri.find_simplex(x))    # find simplex number
@@ -772,6 +855,18 @@ class Rom(object):
 
 
     def _get_spatial_coords(self,tri,n,c):
+        r"""
+        Obtain spatial coordinates in tri for the given Barycentric coord
+
+        :Input:
+        tri: Deluanay triangulation (scipy)
+        n: element number
+        c: (2,)-array of doubles containing Barycentric coordinate
+
+        :Output:
+        x: (2,)-array of doubles containing spatial coordinate
+
+        """
     
         ndim = tri.ndim
         T = tri.transform[n,:ndim,:ndim]
@@ -781,6 +876,7 @@ class Rom(object):
 
         return x
 
+    
     def _get_uniform_samples(self,n):
         
         x = np.linspace(0.,1.,n)
@@ -791,6 +887,7 @@ class Rom(object):
         
         return np.array([x0[(x0 + y0) <= 1.],y0[(x0 + y0) <= 1.]])    
 
+    
     def _get_sides(self,tri,n):
         
         simplex = tri.simplices[n,:]
@@ -799,6 +896,7 @@ class Rom(object):
         
         return side0,side1
 
+    
     def _get_time_index(self,j,times_list):
         l0 = next((i for i,i0 in enumerate(times_list) if j <i0),\
                    len(times_list)) - 1
@@ -807,14 +905,20 @@ class Rom(object):
         return max([l0,0])
     
     
-    def _dinterp2D(self,u10,u01,u00,c,offset=None,return_parts=False):
+    
+    def _dinterp2D(self,u10,u01,u00,c,offset=None,return_pieces=False):
         r'''
+        displacement interpolation in 2D parameter space, computed by
+        performing 2 disp. interpolations
         
-        c is a 2-array with barycentric coordinates
+        :Input:
+        u10,u01,u00: nodes (vertices) of the parameter-triangle
+        c: is a (2,)-array with barycentric coordinates
         
         '''
-        diffp = self._diffp        
-        dinterp_alphas = self._dinterp_alphas
+
+        diffp = self._diffp                     # differentiate 
+        dinterp_alphas = self._dinterp_alphas   # disp. interp in bulk
 
         v00 = diffp(u00)
         v10 = diffp(u10)
@@ -824,44 +928,41 @@ class Rom(object):
             offset = (1. - c[0] - c[1])*u00[0] + c[0]*u10[0] + c[1]*u01[0]
         
         alphas = [c[0]]
-        g_list = dinterp_alphas(v00,v10,alphas,return_int=False)
+        g_list = dinterp_alphas(v00,v10,alphas,return_pieces=False,\
+                                               return_int=False)
         va0 = g_list[0]
         
-        g_list = dinterp_alphas(v01,v10,alphas,return_int=False)
+        g_list = dinterp_alphas(v01,v10,alphas,return_pieces=False,\
+                                               return_int=False)
         va1 = g_list[0]
-        
-    #     va0[-1] = va0[-2]  # kluging it
-    #     va1[-1] = va1[-2]
-        
-    #     pl.figure(figsize=(14,2))
-    #     pl.plot(va0)
-    #     pl.plot(va0 - va1,'--')
-    #     print(va0)
-    #     w0p,w0m = get_parts(v10)
-    #     w1p,w1m = get_parts(v01)
-        
-    #     pl.plot(w0p,'r')
-    #     pl.plot(w1p,'b')
         
         if c[0] < 1.:
             alphas = [c[1] *(1. - c[0])]
         else:
+            # trivial case
             alphas = [0.]
-        g_list = dinterp_alphas(va0,va1,alphas,return_int=True,return_parts=return_parts)
-        if not return_parts:
+        g_list = dinterp_alphas(va0,va1,alphas,return_int=True,\
+                                return_pieces=return_pieces)
+        if not return_pieces:
             uaa = g_list[0]
             uaa += offset
-    #     print(offset)
             return uaa
         else:
-    #         uaa_list = []
-    #         for g in g_list:
-    #             uaa_list.append(np.cumsum(g))
             return g_list
 
 
 
-    def _dinterp2D_tri(self,tri,u_list,snapshot_indices,mu):
+    def _dinterp2D_tri(self,tri,u_list,tm_list,mu):
+        r"""
+        Perform displacement interpolation in 2D parameter space
+        over a triangle over give time
+
+        :Inputs:
+        - tri: Delunay triangulation
+        - u_list: HFM solutions corresponding to the given triangle
+        - tm_list: list of time-steps to interpolate over
+
+        """
         
         uaa_snapshot = []
 
@@ -873,50 +974,40 @@ class Rom(object):
         c = np.abs(c)
         side0,side1 = get_sides(tri,n)
     
-    
-        for j in range(len(snapshot_indices)):
+        for j in range(len(tm_list)):
     
             tm = snapshot_indices[j]
             
-            anm = np.array(u_list[side0[0]][:,tm]).flatten()
-        
             u00 = np.array(u_list[side0[0]][:,tm]).flatten()
             u10 = np.array(u_list[side0[1]][:,tm]).flatten()
             u01 = np.array(u_list[side1[1]][:,tm]).flatten()
                 
-            if 0:
-                fig,ax = pl.subplots(nrows=3,ncols=2,figsize=(15,2))
-                
-                u00p,u00m = get_parts(diffp(u00))
-                u10p,u10m = get_parts(diffp(u10))
-                u01p,u01m = get_parts(diffp(u01))
-            
-                ax[0,1].plot(u00,'b');
-                ax[1,1].plot(u10,'g');
-                ax[2,1].plot(u01,'r');  
-        
-                ax[0,0].plot(u00m,'b--')
-                ax[1,0].plot(u10m,'g--')
-                ax[2,0].plot(u01m,'r--')
-            
-            uaa = self._dinterp2D(u10,u01,u00,c,offset=0.,return_parts=False)
-        
-            if 0:
-                pl.figure(figsize=(15,2))
-                pl.plot(uaa)
-                pl.title(str(j))
-            
+            uaa = self._dinterp2D(u10,u01,u00,c,offset=0.,return_pieces=False)
             uaa_snapshot.append(uaa)
         
         uaa_snapshot = np.array(uaa_snapshot).T
         return uaa_snapshot
 
+
     
     def build_bases(self,tol=1e-10,Mfinal=80,max_basis_size=200,\
-                    t_interval=5,P=5,p = 40,nalpha=5,save_raw=False):
+                    t_interval=5,P=5,Pt=5,p=40,save_snapshot=False,\
+                    verbose=False):
         r'''
+        Construct local basis, by applying disp. interpolation over each
+        local parameter-time space element and performing SVD
 
-        P = 5            no. of samples per triangular element
+        :Input:
+
+        tol: tolerance level for truncating singular values in percentage
+        p: no. of terms to keep in the Taylor series expansion of source term
+        nalphan
+        P: no. of unformly-spaced samples per element in parameter
+        Pt: no. of unformly-spaced samples per element in time
+        t_interval: interval in the parameter-time element
+        max_basis_size: threshold the maximum number of basis
+        save_snapshot: store snapshot matrix (pre-SVD)
+        Mfinal: final time-step
 
         '''
 
@@ -947,16 +1038,17 @@ class Rom(object):
         time_index_list = [1,2] + range(3,Mfinal,t_interval)
         self._time_index_list = time_index_list
         
-        if 0:
+        if verbose:
             # plot barycentric grid-points z
             fig,axes = pl.subplots(ncols=2,figsize=(10,4));
             axes[0].plot(z[0,:],z[1,:],'.');
             # plot parameter points in mu-plane
             for mu0 in mu_list:
                 axes[1].plot(mu0[0],mu0[1],'r.');
+            fig.savefig('_plots/sampled_parameter_pts.png')
         
         u_list = self._hfm_u_list      # get HFM solutions
-        alphas = np.linspace(0.,1.,nalpha)  # number of points sampled in time
+        alphas = np.linspace(0.,1.,Pt)  # number of points sampled in time
 
         for n in range(tri.nsimplex):
             
@@ -979,8 +1071,8 @@ class Rom(object):
             for j in range(len(time_index_list)-1):
                 
                 basis_j = []    # basis for time-slice
-                print('- building basis at time-step n = ' \
-                          + str(time_index_list[j]))
+                print('- building basis at time-step n = {:04d}'.format(\
+                         time_index_list[j]))
                 
                 for mu in mu_list:
                     
@@ -993,7 +1085,7 @@ class Rom(object):
                     v1 = diffp(uaa_j1)
                     
                     us = get_W(v0,v1,alphas,\
-                               return_parts=True, return_svd=False)
+                               return_pieces=True, return_svd=False)
                     basis_j.append(us)
                 
                 basis_all.append(basis_j)
@@ -1008,8 +1100,6 @@ class Rom(object):
                 
                 basis_array_j = np.concatenate(basis_j3, axis=1)
                 U,s,V = np.linalg.svd(basis_array_j,full_matrices=0)
-                if 0:
-                    pl.semilogy(s,'-rx');
                 s_list.append(s)
                 M_k0 = \
                     next((i for i,si in enumerate(s/s[0]) if si < tol),100)
@@ -1018,7 +1108,7 @@ class Rom(object):
                 Usmall = U[:,:M_k] 
                 basis_list.append(Usmall)
                 
-                if save_raw:
+                if save_snapshot:
                     basis_raw_list.append(basis_array_j)
 
             self._rom_basis.append(basis_list)
@@ -1073,9 +1163,9 @@ class Rom(object):
 
             self._rom_T.append(transition_list)
 
-            ##                                              ##
-            ##      save generated lists to output files    ##
-            ##                                              ##
+            ##
+            ##  save generated lists to output files    
+            ##
             L = len(basis_list)
             for k in range(L):
                 m = L - 1 - k
@@ -1110,9 +1200,11 @@ class Rom(object):
             np.save(M_fname,M_list)
 
 
-    def mc_sample(self,nsols=1000,M0=4000):
+    def _mc_sample(self,nsols=1000,M0=4000):
         r"""
-            further reduction of the model based on sampling
+        
+        further reduction of the model based on MC sampling
+        
         """
 
         np.random.seed(12345)
@@ -1145,10 +1237,12 @@ class Rom(object):
             np.save(sols_fname,rs_list)
             self._rom_set_up = False
 
+    
     def _dot3d(self,A,B,C,D):
         r"""
-            compute A_{i,j,k} B_{i,I} C_{j,J} D_{k,K}
-            resulting in: an array E of size {I,J,K}
+        compute A_{i,j,k} B_{i,I} C_{j,J} D_{k,K}
+        resulting in: an array E of size {I,J,K}
+        
         """
 
         E = np.dot(A,D)
@@ -1157,19 +1251,28 @@ class Rom(object):
 
         return E
 
-    def _reduce_bases(self,tol=1e-6,max_nbasis=150,max_time_step=2000):
+    
+    def reduce_bases(self,tol=1e-6,max_nbasis=150,max_time_step=2000):
         r"""
-            compute further reduction using low-dimensional space 
+        compute POD reduced basis for each local element using sampled basis
+        functions
+
+        :Inputs:
+        - max_time_step: maximum allowed time-step
+        - max_nbasis: maximum no. of basis allowed
+        - tol: tolerance for truncating singular values (%)
         
         """
+
+        self._mc_sample()
         N = self._rom_tri.nsimplex
         til = self._time_index_list.tolist()
         M = len(til)
         
         for n in range(N):
             # compute reduction
-            mu_fname = '_output/sampled_mu_' + str(n) + '.npy'
-            sols_fname = '_output/sampled_rom_sols_' + str(n) + '.npy'
+            mu_fname = '_output/sampled_mu_'+str(n)+'.npy'
+            sols_fname = '_output/sampled_rom_sols_'+str(n)+'.npy'
 
             M_fname = '_output/M_' + str(n) + '.npy'
             M_list = np.load(M_fname)
@@ -1210,7 +1313,6 @@ class Rom(object):
                 basis_fname = \
                         '_output/basis_' +str(n)+ '_' +str(m)+ '.npy'
                 basis = np.load(basis_fname)
-                #m2 = min([basis.shape[1], W.shape[0]])
                 rbasis = np.dot(basis[:,:m1],W)
                 rbasis_fname = \
                         '_output/rbasis_' +str(n)+ '_' +str(m)+ '.npy'
@@ -1233,9 +1335,6 @@ class Rom(object):
                         '_output/src_' +str(n)+ '_' +str(m)+ '.npy'
                 src = np.load(src_fname)
                 p = src.shape[1]
-                #rsrc = np.zeros((m0,p))
-                #for i in range(m0):
-                #    rsrc[i,:] = np.dot(W[:,i],src)
                 rsrc = np.dot(W.T,src)
                 rsrc_fname = \
                         '_output/rsrc_' +str(n)+ '_' +str(m)+ '.npy'
@@ -1243,10 +1342,6 @@ class Rom(object):
                 
                 # reduce BCs
                 print('- computing reduced BC...')
-                #bc_fname = \
-                        #'_output/bc_' +str(n)+ '_' +str(m)+ '.npy'
-                #bc = np.load(bc_fname)
-                #rbc = np.dot(bc,W)
                 rbc = rbasis[0,:m0]
                 rbc /= np.linalg.norm(rbc)
                 rbc_fname = \
@@ -1273,18 +1368,25 @@ class Rom(object):
         self._rom_reduced = True
     
 
-    def _random_mu(self):
+    def random_mu(self):
         mu = np.random.rand(2)
         mu[0] = mu[0]*(9. - 3.) + 3.
         mu[1] = mu[1]*(0.075 - 0.02) + 0.02
         return mu
 
+
     def _set_up_rom(self,reset=False,load_basis=False,\
                          simplex_list=None, time_interval_list=None, M0=4000):
         r"""
         
-        Load bases / F / src / transition_list into memory
+        Load bases precomputed flux, src, transition_list into memory
 
+        :Inputs:
+        - reset: force reload basis functions and store into memory
+        - load_basis: load the high-dimensional basis vectors in to memory
+        - time_interval_list: restrict to given time interval
+        - M0: final time-step
+    
         """
 
         if reset:
@@ -1306,7 +1408,7 @@ class Rom(object):
                 k_list = simplex_list
 
             if time_interval_list == None:
-                #TODO: not to be confused with usual time_index_list
+                # not to be confused with usual time_index_list
                 m_list = range(M-1)
             else:
                 m_list = time_interval_list
@@ -1369,19 +1471,20 @@ class Rom(object):
             print('ROM already set up')
             pass
 
-#    def reduce_rom(self):
-#
-#        self.run_rom(mu=mu0)
+
     
     def run_rom(self,mu=[7.5, 0.035],M0=4000,\
                      evaluate=False,verbose=False,reread=False,\
                      frugal=False):
         r"""
         run reduced order model
-        kwargs
+        
+        :Input:
           - mu: 2D-array [mu1,mu2]
           - M0: maximal number of time-steps
           - evaluate: represent in HFM basis and store in self._rom_ra_list
+          - frugal: set up and run rom for just one element
+          
 
         """
         
@@ -1433,13 +1536,9 @@ class Rom(object):
         u0a[0:2] = mu0   # mu0
         r0 = np.dot(U.T,u0a)
         r1 = r0
-        r1 = np.array(r1)       # redundant
+        r1 = np.array(r1)       # redundant..?
         r_list = []
 
-        if 0:
-            pl.figure(figsize=(14,2))
-            pl.plot(np.dot(basis_list[k][:,:M_0],r0))
-        
         sc = 1
         dt = self._hfm_dt
         dt1 = dt/sc
@@ -1470,9 +1569,9 @@ class Rom(object):
             if evaluate:
                 M_k = M_list[i0_old]
                 if self._rom_reduced:
-                    fname = '_output/rbasis_' + str(k) + '_' + str(i0_old) + '.npy'
+                    fname = '_output/rbasis_'+str(k)+'_'+str(i0_old)+'.npy'
                 else:
-                    fname = '_output/basis_' + str(k) + '_' + str(i0_old) + '.npy'
+                    fname = '_output/basis_'+str(k)+'_'+str(i0_old)+'.npy'
                 Usmall = basis_list[i0_old]
                 ua = np.dot(Usmall,r1)
                 self._rom_ra_list.append(ua)
@@ -1481,6 +1580,7 @@ class Rom(object):
         self._rom_r1 = r1
         self._rom_r_list = r_list
         self._rom_i0 = i0_old
+
 
     def plot_rom_solution(self):
 
@@ -1494,7 +1594,7 @@ class Rom(object):
             ra = ra_list[j]
             ax0.plot(x,ra,'royalblue')
 
-        f.savefig('rom_solution.png',dpi=dpi)
+        f.savefig('_plots/rom_solution.png',dpi=dpi)
         pl.close(f)
 
 
@@ -1517,12 +1617,14 @@ class Rom(object):
             
             ax1.plot(x,ra - u[:,j],'royalblue')
 
-        # TODO save to _plots subdir?
         k = self._rom_tri.find_simplex(mu)
+        
         ax0.set_title('element = ' + str(k))
         ax1.set_title('element = ' + str(k))
-        f0.savefig(sol_plot_fname,dpi=dpi)
-        f1.savefig(err_plot_fname,dpi=dpi)
+        sol_plot_fname = os.path.join('_plots',sol_plot_fname)
+        err_plot_fname = os.path.join('_plots',err_plot_fname )
+        f0.savefig(sol_plot_fname ,dpi=dpi)
+        f1.savefig(err_plot_fname ,dpi=dpi)
         
         pl.close(f0)
         pl.close(f1)
@@ -1544,33 +1646,26 @@ class Rom(object):
             mu = k2mu_list[k]
             for j in range(0,M,K):
                 ax0.plot(x,uk[:,j],'royalblue')
-            #ax0.set_title('HFM solution \n $(\mu_1,\mu_2)$ = (' \
-                            #+ str(mu[0]) + ',' + str(mu[1]) + ')')
             ax0.set_title('$(\mu_1,\mu_2)$ = (' \
                             + str(mu[0]) + ',' + str(mu[1]) + ')')
-            fname = '_output/sol_u_' + str(k) + '.png'
-            #f.tight_layout()
+            fname = os.path.join('_plots','sol_u_' + str(k) + '.png')
             f.savefig(fname,dpi=dpi)
             ax0.clear()
         pl.close(f)
 
 
-    def save_as_pickle(self,fname='_output/rom_file.pkl'):
-
-        import pickle
-
-        with open(fname, 'wb') as output:
-            pickle.dump(self, output, pickle.HIGHEST_PROTOCOL)
-
-    def save_data(self):
+    
+    def save(self):
         r"""
-        save ROM data
+        save ROM 
+        
         """
         
         import pickle
-
+        self.save_as_pickle()
+        
         # to save in text-file
-        with open('_output/info.txt',mode='w') as text_file:
+        with open('_output/ROM_info.txt',mode='w') as text_file:
             text_file.write('N  = {:10d}\n'.format(self._N))
             text_file.write('h  = {:26.15f}\n'.format(self._h))
             text_file.write('M  = {:10d}\n'.format(self._hfm_M))
@@ -1593,16 +1688,15 @@ class Rom(object):
             pickle.dump(self._rom_tri, output, pickle.HIGHEST_PROTOCOL)
 
 
-    def load_data(self):
+    def load(self):
         r"""
-            
-            load data 
+        load stored ROM 
             
         """
         
         import pickle
 
-        with open('_output/info.txt',mode='r') as input_file:
+        with open('_output/ROM_info.txt',mode='r') as input_file:
             for row in input_file:
                 val = row.split('=')[1]
                 if 'N' == row.split('=')[0][0]:
@@ -1634,5 +1728,13 @@ class Rom(object):
         fname = '_output/tri.pkl'
         with open(fname, 'r') as input_pkl:
             self._rom_tri = pickle.load(input_pkl)
+
+
+    def save_as_pickle(self,fname='_output/rom_file.pkl'):
+
+        import pickle
+
+        with open(fname, 'wb') as output:
+            pickle.dump(self, output, pickle.HIGHEST_PROTOCOL)
 
         
