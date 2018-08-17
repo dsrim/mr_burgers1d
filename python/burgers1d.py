@@ -102,12 +102,12 @@ class Rom(object):
         
         """
         
-        S = self.hfm_D
+        D = self.hfm_D
         src = self.hfm_src
         dt = self._hfm_dt
         
         u = np.array(u)
-        u = u - np.dot(dt*S,u*u) + dt*src
+        u = u - np.dot(dt*D,u*u) + dt*src
         
         return u
 
@@ -690,11 +690,11 @@ class Rom(object):
             
         else:
             dim = us[-1].shape
-            us.append(np.ones(dims))    # add constant fctns
-            for k in range(1,5):
+            us.append(np.ones(dims))    # append constant fctns
+            for k in range(1,8):
                 ubc0 = np.zeros(dims)
                 ubc0[:k] = 1.
-                us.append(ubc0.copy())  # add fctns for left-BCs
+                us.append(ubc0.copy())  # append fctns for left-BCs
             us = np.array(us).T
             
         if return_svd:
@@ -1549,9 +1549,6 @@ class Rom(object):
             bc_list = self._rom_bc[k]
             transition_list = self._rom_T[k]
         
-        #TODO: create setup_rom() to set up the reduced order model
-        #      load transition_list, F_list, src_list, basis_list into memory
-        # load basis/flux/src over time
         
         rom_time_step = self._rom_time_step
 
@@ -1575,7 +1572,7 @@ class Rom(object):
         dt = self._hfm_dt
         dt1 = dt/sc
         #M0 = min([time_index_list[M0],time_index_list[-1]])
-        M1 = min(M0,len(time_index_list))
+        M1 = min(M0,len(time_index_list)-2)
         M0 = time_index_list[M1]
         #print('run_rom: M0 =  ' + str(M0))
 
@@ -1585,8 +1582,8 @@ class Rom(object):
         
         i0_old = get_time_index(0, time_index_list)
 
-        if verbose:
-            print('running ROM..')
+        #if verbose:
+        #    print('running ROM..')
         for j in range(1,int(M0*sc)):
             if verbose:
                 sys.stdout.write('\r= time-step : {:04d}'.format(j))
