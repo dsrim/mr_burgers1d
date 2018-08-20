@@ -11,3 +11,5 @@ Requires ``dinterp`` which can be obtained from [``github.com/dsrim/dinterp``](h
 * *Model reduction of a parametrized scalar hyperbolic conservation law using displacement interpolation* <br>
 D. Rim and K.T Mandli <br>
 Preprint (2018) [arXiv](https://arxiv.org/abs/1805.05938)
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.1400560.svg)](https://doi.org/10.5281/zenodo.1400560)
